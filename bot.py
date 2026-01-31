@@ -2,22 +2,28 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime, timedelta
 import os
+import json
+import tempfile
 import gspread
 from google.oauth2.service_account import Credentials
 
 # =====================
-# KONFIGURASI
+# KONFIGURASI (AMAN UNTUK RAILWAY)
 # =====================
-BOT_TOKEN = "8595619697:AAGKwfFfiStWb_eQNDxbzf8FCEByj_WGuX0"
-SHEET_NAME = "Angel Studyneeds Sales"
-CREDS_FILE = "credentials.json"
+# WAJIB di Railway Variables:
+# BOT_TOKEN = 8595619697:AAGKwfFfiStWb_eQNDxbzf8FCEByj_WGuX0
+# GSHEET_CREDS_JSON = isi full JSON service account (copy-paste)
+# (opsional) SHEET_NAME kalau beda
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+SHEET_NAME = os.environ.get("SHEET_NAME", "Angel Studyneeds Sales")
 
 # Tab names
 SALES_SHEET = "sales"
 TURNITIN_SHEET = "turnitin"
 CANVA_SHEET = "canva"
 
-OWNER_FILE = "owner_chat_id.txt"  # tempat nyimpan chat id kamu untuk reminder
+# Railway filesystem itu tidak permanen, jadi simpan owner di /tmp
+OWNER_FILE = os.environ.get("OWNER_FILE", "/tmp/owner_chat_id.txt")
 
 # Reminder rules (sesuai request kamu)
 BULANAN_MIN_DAYS = 28
@@ -34,7 +40,22 @@ def get_spreadsheet():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    creds = Credentials.from_service_account_file(CREDS_FILE, scopes=scopes)
+
+    creds_json = os.environ.get("GSHEET_CREDS_JSON", "").strip()
+    if not creds_json:
+        raise RuntimeError(
+            "GSHEET_CREDS_JSON belum di-set di Railway Variables. "
+            "Isi dengan JSON service account (copy-paste)."
+        )
+
+    data = json.loads(creds_json)
+
+    # buat file json sementara
+    fd, path = tempfile.mkstemp(suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    creds = Credentials.from_service_account_file(path, scopes=scopes)
     client = gspread.authorize(creds)
     return client.open(SHEET_NAME)
 
@@ -122,7 +143,7 @@ async def test_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Gagal konek ke Sheet:\n{e}")
 
 # =====================
-# TURNITIN (yang sudah jalan)
+# TURNITIN
 # =====================
 def days_left(expire_str: str) -> int:
     expire_dt = datetime.strptime(expire_str, "%Y-%m-%d")
@@ -295,16 +316,15 @@ async def add_canva(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sh = get_spreadsheet()
         ws = sh.worksheet(CANVA_SHEET)
 
-        # Kolom reminder flags diset kosong (belum terkirim)
         ws.append_row([
-            fmt_dt(now_dt),        # timestamp
-            email,                 # email
-            duration,              # duration_days
-            fmt_dt(expire_dt),     # expire_datetime
-            "ACTIVE",              # status
-            phone,                 # customer_phone
-            "",                    # note
-            "", "", "", ""         # rem14_sent, rem7_sent, rem3_sent, rem1h_sent
+            fmt_dt(now_dt),
+            email,
+            duration,
+            fmt_dt(expire_dt),
+            "ACTIVE",
+            phone,
+            "",
+            "", "", "", ""
         ])
 
         await update.message.reply_text(
@@ -408,10 +428,6 @@ async def cek_canva_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error:\n{e}")
 
 async def canva_hampir_habis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Opsional: /canva_hampir_habis  (default 3 hari)
-    atau /canva_hampir_habis 7
-    """
     try:
         threshold_days = 3
         parts = update.message.text.strip().split()
@@ -466,7 +482,7 @@ def _flag_is_sent(v) -> bool:
 async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
     owner_chat_id = load_owner_chat_id()
     if not owner_chat_id:
-        return  # owner belum set
+        return
 
     try:
         sh = get_spreadsheet()
@@ -476,11 +492,8 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
         if not rows:
             return
 
-        # header kolom (harus sesuai yang kamu buat)
-        # timestamp | email | duration_days | expire_datetime | status | customer_phone | note | rem14_sent | rem7_sent | rem3_sent | rem1h_sent
         remind_msgs = []
 
-        # untuk update flag, kita perlu akses row index spreadsheet (get_all_records mulai dari row 2)
         for idx, r in enumerate(rows, start=2):
             email = str(r.get("email", "")).strip()
             exp_str = str(r.get("expire_datetime", "")).strip()
@@ -497,16 +510,11 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
             td = remaining(exp_dt)
             secs = td.total_seconds()
 
-            # update status kalau habis
             if secs <= 0:
-                # set status EXPIRED kalau belum
                 if str(r.get("status", "")).strip().upper() != "EXPIRED":
-                    ws.update_cell(idx, 5, "EXPIRED")  # kolom E = status
+                    ws.update_cell(idx, 5, "EXPIRED")
                 continue
 
-            # aturan reminder:
-            # - durasi bulanan (>=28 hari): reminder di sisa 14, 7, 3 hari
-            # - durasi < 7 hari: reminder H-1 jam
             if duration_days >= BULANAN_MIN_DAYS:
                 days_left_float = secs / 86400.0
 
@@ -514,18 +522,17 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
                 rem7_sent = _flag_is_sent(r.get("rem7_sent", ""))
                 rem3_sent = _flag_is_sent(r.get("rem3_sent", ""))
 
-                # Kirim ketika sudah masuk window <= N hari (biar nggak kelewat)
                 if (days_left_float <= REM_DAYS_14) and (not rem14_sent):
                     remind_msgs.append(f"🔔 Canva 14 hari lagi\n{email}\nExp: {exp_str}\nHP: {mask_phone(phone)}")
-                    ws.update_cell(idx, 8, "TRUE")  # kolom H rem14_sent
+                    ws.update_cell(idx, 8, "TRUE")
 
                 if (days_left_float <= REM_DAYS_7) and (not rem7_sent):
                     remind_msgs.append(f"🔔 Canva 7 hari lagi\n{email}\nExp: {exp_str}\nHP: {mask_phone(phone)}")
-                    ws.update_cell(idx, 9, "TRUE")  # kolom I rem7_sent
+                    ws.update_cell(idx, 9, "TRUE")
 
                 if (days_left_float <= REM_DAYS_3) and (not rem3_sent):
                     remind_msgs.append(f"⚠️ Canva H-3 (siap-siap kick)\n{email}\nExp: {exp_str}\nHP: {mask_phone(phone)}")
-                    ws.update_cell(idx, 10, "TRUE")  # kolom J rem3_sent
+                    ws.update_cell(idx, 10, "TRUE")
 
             elif duration_days < 7:
                 rem1h_sent = _flag_is_sent(r.get("rem1h_sent", ""))
@@ -536,21 +543,22 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
                         f"⏰ Canva H-1 JAM (waktunya kick kalau habis)\n"
                         f"{email}\nExp: {exp_str}\nSisa: {human_remaining(td)}\nHP: {mask_phone(phone)}"
                     )
-                    ws.update_cell(idx, 11, "TRUE")  # kolom K rem1h_sent
+                    ws.update_cell(idx, 11, "TRUE")
 
         if remind_msgs:
-            # kirim jadi beberapa pesan biar aman
             for msg in remind_msgs[:20]:
                 await context.bot.send_message(chat_id=owner_chat_id, text=msg)
 
     except Exception:
-        # sengaja diem (biar bot gak spam error), tapi kalau mau debug bisa print
         pass
 
 # =====================
 # MAIN
 # =====================
 def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN belum di-set di Railway Variables!")
+
     app = Application.builder().token(BOT_TOKEN).build()
 
     # basic
@@ -570,6 +578,7 @@ def main():
     app.add_handler(CommandHandler("canva_hampir_habis", canva_hampir_habis))
 
     # reminder job: cek setiap 1 jam
+    # (akan jalan jika python-telegram-bot[job-queue] terinstall)
     app.job_queue.run_repeating(reminder_job, interval=3600, first=10)
 
     print("Bot sedang berjalan...")
