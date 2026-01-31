@@ -14,7 +14,7 @@ from apps_config import APPS, BULANAN_MIN_DAYS, REM_DAYS_14, REM_DAYS_7, REM_DAY
 # ==========================================================
 # CONFIG
 # ==========================================================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+BOT_TOKEN = os.environ.get("8595619697:AAGKwfFfiStWb_eQNDxbzf8FCEByj_WGuX0", "").strip()
 SHEET_NAME = os.environ.get("SHEET_NAME", "Angel Studyneeds Sales")
 
 TURNITIN_SHEET = "turnitin"
@@ -259,3 +259,4 @@ def main():
 
 if __name__=="__main__":
     main()
+
