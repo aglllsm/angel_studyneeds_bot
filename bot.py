@@ -48,17 +48,30 @@ def main_menu_kb():
     )
 
 def apps_inline_kb(prefix: str):
-    # prefix: ADD / CHECK / DELETE etc (kita pakai ADD saja untuk flow tambah akun)
     buttons = []
+
+    # 🔥 TURNITIN (KHUSUS, SELALU MUNCUL)
+    buttons.append([
+        InlineKeyboardButton("📚 Turnitin", callback_data=f"{prefix}:turnitin")
+    ])
+
+    # ✨ Aplikasi lain dari APPS
     row = []
     for k, v in APPS.items():
-        row.append(InlineKeyboardButton(f"✨ {v['title']}", callback_data=f"{prefix}:{k}"))
+        row.append(
+            InlineKeyboardButton(f"✨ {v['title']}", callback_data=f"{prefix}:{k}")
+        )
         if len(row) == 2:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
-    buttons.append([InlineKeyboardButton("❌ Batal", callback_data="CANCEL")])
+
+    # ❌ Batal
+    buttons.append([
+        InlineKeyboardButton("❌ Batal", callback_data="CANCEL")
+    ])
+
     return InlineKeyboardMarkup(buttons)
 
 # ==========================================================
@@ -572,3 +585,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
