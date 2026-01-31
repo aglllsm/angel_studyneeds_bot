@@ -260,7 +260,11 @@ async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     if is_menu_help(text):
         await help_cmd(update, ctx)
+    if ctx.user_data:
         return
+
+    text = norm_text(update.message.text)
+    ...
 
     # kalau ngetik random saat tidak ada proses conv
     await update.message.reply_text("Pilih menu ya 🙂", reply_markup=main_menu_kb())
@@ -608,8 +612,10 @@ def main():
     app.add_handler(conv)
 
     # handler untuk tombol lain (list/delete/owner/help) dan random text
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_other))
-
+   app.add_handler(
+    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_other),
+    block=False
+)
     # reminder
     app.job_queue.run_repeating(reminder_job_all_apps, interval=3600, first=10)
 
@@ -617,4 +623,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
