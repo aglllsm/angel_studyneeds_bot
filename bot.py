@@ -48,9 +48,7 @@ def main_menu_kb():
     )
 
 def apps_inline_kb(prefix: str):
-    # ambil semua dari APPS, jangan hardcode Turnitin lagi
     items = list(APPS.items())
-
     buttons = []
     row = []
     for k, v in items:
@@ -105,22 +103,70 @@ def human(td):
 def _flag(v):
     return str(v).strip().lower() in ("1", "true", "yes", "sent", "done")
 
+def norm_text(t: str) -> str:
+    # Normalisasi ringan biar gak sensitif emoji/variasi spasi Telegram
+    t = (t or "").strip()
+    t = " ".join(t.split())
+    return t
+
+def is_menu_check(t: str) -> bool:
+    t = norm_text(t)
+    # Accept "🔎 Cek Email", "🔍 Cek Email", "Cek Email"
+    return t.endswith("Cek Email") or t == "Cek Email"
+
+def is_menu_add(t: str) -> bool:
+    t = norm_text(t)
+    return t.endswith("Tambah Akun") or t == "Tambah Akun"
+
+def is_menu_list(t: str) -> bool:
+    t = norm_text(t)
+    return t.endswith("Cek List") or t == "Cek List"
+
+def is_menu_delete(t: str) -> bool:
+    t = norm_text(t)
+    return t.endswith("Hapus Email Dobel") or t == "Hapus Email Dobel"
+
+def is_menu_owner(t: str) -> bool:
+    t = norm_text(t)
+    return t.endswith("Set Owner") or t == "Set Owner"
+
+def is_menu_help(t: str) -> bool:
+    t = norm_text(t)
+    return t.endswith("Bantuan") or t == "Bantuan"
+
 # ==========================================================
-# GOOGLE SHEET
+# GOOGLE SHEET (cache biar gak authorize terus)
 # ==========================================================
+_GC = None
+_SH = None
+
 def get_spreadsheet():
+    global _GC, _SH
+    if _SH is not None:
+        return _SH
+
     if "GSHEET_CREDS_JSON" not in os.environ:
         raise RuntimeError("ENV GSHEET_CREDS_JSON belum di-set di Railway.")
+
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
+
     data = json.loads(os.environ["GSHEET_CREDS_JSON"])
     fd, path = tempfile.mkstemp(suffix=".json")
-    with os.fdopen(fd, "w") as f:
-        json.dump(data, f)
-    gc = gspread.authorize(Credentials.from_service_account_file(path, scopes=scopes))
-    return gc.open(SHEET_NAME)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f)
+        creds = Credentials.from_service_account_file(path, scopes=scopes)
+        _GC = gspread.authorize(creds)
+        _SH = _GC.open(SHEET_NAME)
+        return _SH
+    finally:
+        try:
+            os.remove(path)
+        except:
+            pass
 
 def ws_for_app(sh, app_key: str):
     if app_key not in APPS:
@@ -160,7 +206,9 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "- 📋 Cek List: ringkasan akun per aplikasi\n"
         "- 🗑 Hapus Email Dobel: bersihin duplikat email\n"
         "- ⚙️ Set Owner: set chat kamu sebagai penerima reminder\n\n"
-        "Ketik /cancel untuk batal saat proses input.",
+        "Ketik /cancel untuk batal saat proses input.\n\n"
+        "Command cepat:\n"
+        "/add, /cek, /list, /dupes, /owner",
         reply_markup=main_menu_kb()
     )
 
@@ -169,20 +217,23 @@ async def set_owner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Owner disimpan. Reminder akan dikirim ke chat ini.", reply_markup=main_menu_kb())
 
 async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Dibatalkan.", reply_markup=main_menu_kb())
     ctx.user_data.clear()
+    if update.message:
+        await update.message.reply_text("❌ Dibatalkan.", reply_markup=main_menu_kb())
     return ConversationHandler.END
 
 async def cancel_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    await q.edit_message_text("❌ Dibatalkan.")
+    try:
+        await q.edit_message_text("❌ Dibatalkan.")
+    except:
+        pass
     ctx.user_data.clear()
     return ConversationHandler.END
 
 # ==========================================================
-# ENTRY POINTS (PENTING!)
-# Ini yang bikin gak ke-reset pas user ngetik email/angka
+# ENTRY POINTS (anti “nyasar ke menu”)
 # ==========================================================
 async def entry_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Pilih aplikasi yang mau ditambah:", reply_markup=apps_inline_kb("ADD"))
@@ -196,18 +247,18 @@ async def entry_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # MENU NON-CONV (tombol lain)
 # ==========================================================
 async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    text = (update.message.text or "").strip()
+    text = norm_text(update.message.text)
 
-    if text == MENU_LIST:
+    if is_menu_list(text):
         await dashboard(update, ctx)
         return
-    if text == MENU_DELETE:
+    if is_menu_delete(text):
         await delete_duplicates_all(update, ctx)
         return
-    if text == MENU_OWNER:
+    if is_menu_owner(text):
         await set_owner(update, ctx)
         return
-    if text == MENU_HELP:
+    if is_menu_help(text):
         await help_cmd(update, ctx)
         return
 
@@ -224,6 +275,11 @@ async def add_pick_app_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if q.data == "CANCEL":
         return await cancel_cb(update, ctx)
 
+    # HARUS format "ADD:<app_key>"
+    if ":" not in q.data:
+        await q.edit_message_text("❌ Callback tidak valid.")
+        return ConversationHandler.END
+
     prefix, app_key = q.data.split(":", 1)
     if prefix != "ADD":
         return ConversationHandler.END
@@ -233,7 +289,10 @@ async def add_pick_app_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     ctx.user_data["add_app"] = app_key
-    await q.edit_message_text(f"{APPS[app_key].get('icon','✨')} {APPS[app_key]['title']}\nMasukkan email akun:\n/cancel untuk batal")
+    await q.edit_message_text(
+        f"{APPS[app_key].get('icon','✨')} {APPS[app_key]['title']}\n"
+        "Masukkan email akun:\n/cancel untuk batal"
+    )
     return ADD_EMAIL
 
 async def add_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -373,11 +432,13 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     found = False
     now = datetime.now()
 
+    email_l = email.lower()
+
     for k, v in APPS.items():
         ws = sh.worksheet(v["sheet"])
         rows = ws.get_all_records()
         for r in rows:
-            if str(r.get("email", "")).strip().lower() == email.lower():
+            if str(r.get("email", "")).strip().lower() == email_l:
                 found = True
                 try:
                     exp = parse_dt(r["expire_datetime"])
@@ -502,19 +563,30 @@ async def reminder_job_all_apps(ctx: ContextTypes.DEFAULT_TYPE):
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN kosong. Set di Railway Variables.")
+
     app = Application.builder().token(BOT_TOKEN).build()
 
     # commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("set_owner", set_owner))
+    app.add_handler(CommandHandler("owner", set_owner))
     app.add_handler(CommandHandler("cancel", cancel))
 
-    # conversation handler (CUMA untuk Tambah Akun & Cek Email)
+    # command cepat (opsional tapi bikin aman)
+    app.add_handler(CommandHandler("add", entry_add))
+    app.add_handler(CommandHandler("cek", entry_check))
+    app.add_handler(CommandHandler("list", dashboard))
+    app.add_handler(CommandHandler("dupes", delete_duplicates_all))
+
+    # conversation handler (Tambah Akun & Cek Email)
     conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex(f"^{MENU_ADD}$"), entry_add),
-            MessageHandler(filters.Regex(f"^{MENU_CHECK}$"), entry_check),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: ConversationHandler.END),  # dummy (biar gak kosong)
+            MessageHandler(filters.Regex(r".*Tambah Akun$"), entry_add),
+            MessageHandler(filters.Regex(r".*Cek Email$"), entry_check),
+            CommandHandler("add", entry_add),
+            CommandHandler("cek", entry_check),
         ],
         states={
             ADD_PICK_APP: [CallbackQueryHandler(add_pick_app_cb)],
@@ -527,11 +599,16 @@ def main():
             CommandHandler("cancel", cancel),
             CallbackQueryHandler(cancel_cb, pattern="^CANCEL$"),
         ],
-        allow_reentry=False,  # 🔥 ini kunci biar gak nembak ulang
+        allow_reentry=True,   # lebih aman: kalau kepencet menu lagi, tetap bisa masuk flow
+        per_chat=True,
+        per_user=True,
+        per_message=False,
     )
+
+    # IMPORTANT: conv dulu, baru handler menu umum
     app.add_handler(conv)
 
-    # handler untuk tombol lain (list/delete/owner/help)
+    # handler untuk tombol lain (list/delete/owner/help) dan random text
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_other))
 
     # reminder
