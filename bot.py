@@ -485,59 +485,69 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Email tidak valid. Coba lagi:\n/cancel untuk batal")
         return CHECK_EMAIL
 
+    await update.message.reply_text("🔎 Mengecek email di semua app...")  # biar user tau bot lagi kerja
+
     sh = get_spreadsheet()
     now = datetime.now()
     email_l = email.lower()
 
     lines = [f"🔎 HASIL CEK: {email}\n"]
     found = False
+    errors = []
 
-    for _, v in APPS.items():
-        ws = sh.worksheet(v["sheet"])
-        values = ws.get_all_values()  # <-- lebih cepat/stabil
-
-        if not values or len(values) < 2:
-            continue
-
-        headers = [h.strip() for h in values[0]]
+    for app_key, v in APPS.items():
         try:
-            idx_email = headers.index("email")
-        except ValueError:
-            continue
-
-        # index optional
-        idx_exp = headers.index("expire_datetime") if "expire_datetime" in headers else None
-        idx_status = headers.index("status") if "status" in headers else None
-        idx_phone = headers.index("customer_phone") if "customer_phone" in headers else None
-
-        for row in values[1:]:
-            row_email = (row[idx_email] if idx_email < len(row) else "").strip().lower()
-            if row_email != email_l:
+            ws = sh.worksheet(v["sheet"])           # bisa error kalau nama tab beda
+            values = ws.get_all_values()            # lebih cepat dari get_all_records
+            if not values or len(values) < 2:
                 continue
 
-            found = True
-            exp_str = row[idx_exp] if (idx_exp is not None and idx_exp < len(row)) else "-"
-            status = row[idx_status] if (idx_status is not None and idx_status < len(row)) else "-"
-            phone = row[idx_phone] if (idx_phone is not None and idx_phone < len(row)) else ""
+            headers = [h.strip() for h in values[0]]
+            if "email" not in headers:
+                continue
 
-            try:
-                exp = parse_dt(exp_str)
-                sisa = human(exp - now)
-            except Exception:
-                sisa = "?"
+            idx_email = headers.index("email")
+            idx_exp = headers.index("expire_datetime") if "expire_datetime" in headers else None
+            idx_status = headers.index("status") if "status" in headers else None
+            idx_phone = headers.index("customer_phone") if "customer_phone" in headers else None
 
-            lines.append(
-                f"{v.get('icon','✨')} {v['title']}\n"
-                f"Expire: {exp_str} ({sisa})\n"
-                f"Status: {status}\n"
-                f"HP: {mask_phone(phone)}\n"
-            )
+            for row in values[1:]:
+                row_email = (row[idx_email] if idx_email < len(row) else "").strip().lower()
+                if row_email != email_l:
+                    continue
+
+                found = True
+                exp_str = row[idx_exp] if (idx_exp is not None and idx_exp < len(row)) else "-"
+                status = row[idx_status] if (idx_status is not None and idx_status < len(row)) else "-"
+                phone = row[idx_phone] if (idx_phone is not None and idx_phone < len(row)) else ""
+
+                try:
+                    exp = parse_dt(exp_str)
+                    sisa = human(exp - now)
+                except Exception:
+                    sisa = "?"
+
+                lines.append(
+                    f"{v.get('icon','✨')} {v['title']}\n"
+                    f"Expire: {exp_str} ({sisa})\n"
+                    f"Status: {status}\n"
+                    f"HP: {mask_phone(phone)}\n"
+                )
+
+        except Exception as e:
+            # jangan bikin bot diam. Skip sheet yang error.
+            errors.append(f"{v.get('title', app_key)}: {type(e).__name__}")
+            continue
 
     if not found:
-        await update.message.reply_text("❌ Tidak ketemu di semua app.", reply_markup=main_menu_kb())
-    else:
-        await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb())
+        lines.append("❌ Tidak ketemu di semua app.")
 
+    # kalau ada tab bermasalah, kasih info singkat (biar kamu tau harus rename tab)
+    if errors:
+        lines.append("\n⚠️ Ada tab yang error (cek nama tab di Google Sheet):")
+        lines.extend([f"- {x}" for x in errors[:5]])
+
+    await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb())
     return ConversationHandler.END
 
 # ==========================================================
@@ -706,6 +716,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
