@@ -1,5 +1,8 @@
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application, CommandHandler, ContextTypes,
+    ConversationHandler, MessageHandler, filters
+)
 from datetime import datetime, timedelta
 import os
 import json
@@ -7,22 +10,32 @@ import tempfile
 import gspread
 from google.oauth2.service_account import Credentials
 
+# ==========================================================
+# NOTE PENTING (BIAR TIDAK ERROR JOBQUEUE)
+# requirements.txt harus minimal ini:
+# python-telegram-bot[job-queue]
+# gspread
+# google-auth
+# python-dateutil
+# pytz
+# ==========================================================
+
 # =====================
 # KONFIGURASI (AMAN UNTUK RAILWAY)
 # =====================
 # WAJIB di Railway Variables:
-# BOT_TOKEN = 8595619697:AAGKwfFfiStWb_eQNDxbzf8FCEByj_WGuX0
+# BOT_TOKEN = token bot telegram
 # GSHEET_CREDS_JSON = isi full JSON service account (copy-paste)
 # (opsional) SHEET_NAME kalau beda
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 SHEET_NAME = os.environ.get("SHEET_NAME", "Angel Studyneeds Sales")
 
-# Tab names
+# Tab names (sesuaikan dengan Google Sheet kamu)
 SALES_SHEET = "sales"
 TURNITIN_SHEET = "turnitin"
 CANVA_SHEET = "canva"
 
-# Railway filesystem itu tidak permanen, jadi simpan owner di /tmp
+# Railway filesystem tidak permanen, simpan owner di /tmp
 OWNER_FILE = os.environ.get("OWNER_FILE", "/tmp/owner_chat_id.txt")
 
 # Reminder rules (sesuai request kamu)
@@ -31,6 +44,27 @@ REM_DAYS_14 = 14
 REM_DAYS_7 = 7
 REM_DAYS_3 = 3
 REM_HOURS_1 = 1
+
+# =====================
+# WIZARD STATES (STEP BY STEP)
+# =====================
+TII_EMAIL, TII_DURASI, TII_PHONE = range(3)
+CANVA_EMAIL, CANVA_DURASI, CANVA_PHONE = range(3, 6)
+
+def is_valid_email(email: str) -> bool:
+    e = (email or "").strip()
+    return ("@" in e) and ("." in e) and (len(e) >= 6)
+
+def clean_phone(phone: str) -> str:
+    return "".join([c for c in str(phone or "") if c.isdigit()])
+
+def is_valid_phone(phone: str) -> bool:
+    p = clean_phone(phone)
+    return len(p) >= 8
+
+def fmt_status(status: str) -> str:
+    s = (status or "").strip().upper()
+    return s if s else "UNKNOWN"
 
 # =====================
 # GOOGLE SHEET
@@ -50,7 +84,7 @@ def get_spreadsheet():
 
     data = json.loads(creds_json)
 
-    # buat file json sementara
+    # bikin file json sementara
     fd, path = tempfile.mkstemp(suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(data, f)
@@ -85,7 +119,6 @@ def mask_phone(phone: str) -> str:
 # TIME HELPERS
 # =====================
 def parse_expire_datetime(s: str) -> datetime:
-    # format yang kita simpan: "YYYY-MM-DD HH:MM:SS"
     return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
 
 def fmt_dt(dt: datetime) -> str:
@@ -115,13 +148,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Halo 👋\n"
         "Aku angel-studyneeds-bot 🤍\n\n"
         "Perintah utama:\n"
-        "/set_owner → set chat kamu untuk reminder otomatis\n\n"
+        "/set_owner → set chat kamu untuk reminder otomatis\n"
+        "/cancel → batalin input step-by-step\n\n"
         "Turnitin:\n"
-        "/add_tii email | durasi_hari | no_hp\n"
+        "/add_tii → tambah (step-by-step)\n"
         "/cek_tii\n"
         "/cek_email email\n\n"
         "Canva:\n"
-        "/add_canva email | durasi_hari | no_hp\n"
+        "/add_canva → tambah (step-by-step)\n"
         "/cek_canva\n"
         "/cek_canva_email email\n"
         "/canva_hampir_habis (opsional)\n"
@@ -142,54 +176,18 @@ async def test_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Gagal konek ke Sheet:\n{e}")
 
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.message.reply_text("✅ Dibatalkan.")
+    return ConversationHandler.END
+
 # =====================
-# TURNITIN
+# TURNITIN (CEK LIST & CEK EMAIL)
 # =====================
 def days_left(expire_str: str) -> int:
     expire_dt = datetime.strptime(expire_str, "%Y-%m-%d")
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     return (expire_dt - today).days
-
-async def add_tii(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        text = update.message.text
-        data = text.replace("/add_tii", "").strip()
-        parts = [p.strip() for p in data.split("|")]
-
-        if len(parts) != 3:
-            await update.message.reply_text(
-                "❌ Format salah.\n"
-                "Pakai:\n"
-                "/add_tii email | durasi_hari | no_hp\n\n"
-                "Contoh:\n"
-                "/add_tii contoh@gmail.com | 30 | 081234567890"
-            )
-            return
-
-        email, duration, phone = parts
-        duration = int(duration)
-
-        now_dt = datetime.now()
-        now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
-        expire_dt = now_dt + timedelta(days=duration)
-        expire_str = expire_dt.strftime("%Y-%m-%d")
-
-        sh = get_spreadsheet()
-        ws = sh.worksheet(TURNITIN_SHEET)
-
-        ws.append_row([now_str, email, duration, expire_str, "ACTIVE", phone, ""])
-
-        await update.message.reply_text(
-            f"✅ Akun Turnitin tersimpan!\n"
-            f"Email: {email}\n"
-            f"Durasi: {duration} hari\n"
-            f"Expire: {expire_str}\n"
-            f"HP: {phone}"
-        )
-    except ValueError:
-        await update.message.reply_text("❌ Durasi harus angka (hari). Contoh: 30")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error:\n{e}")
 
 async def cek_tii(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -208,7 +206,7 @@ async def cek_tii(update: Update, context: ContextTypes.DEFAULT_TYPE):
             email = str(r.get("email", "")).strip()
             expire = str(r.get("expire_date", "")).strip()
             phone = str(r.get("customer_phone", "")).strip()
-            status = str(r.get("status", "")).strip() or "UNKNOWN"
+            status = fmt_status(r.get("status", ""))
 
             if expire:
                 sisa = days_left(expire)
@@ -234,8 +232,7 @@ async def cek_tii(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cek_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        text = update.message.text
-        email_query = text.replace("/cek_email", "").strip()
+        email_query = update.message.text.replace("/cek_email", "").strip()
         if not email_query:
             await update.message.reply_text("❌ Format: /cek_email email@domain.com")
             return
@@ -256,90 +253,40 @@ async def cek_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
         email = str(found.get("email", "")).strip()
         expire = str(found.get("expire_date", "")).strip()
         phone = str(found.get("customer_phone", "")).strip()
-        status = str(found.get("status", "")).strip() or "UNKNOWN"
+        status = fmt_status(found.get("status", ""))
         start = str(found.get("timestamp", "")).strip()
         duration = str(found.get("duration_days", "")).strip()
 
         if expire:
             sisa = days_left(expire)
             if sisa < 0:
-                info = f"❌ HABIS ({abs(sisa)} hari lalu)"
+                remain_txt = f"❌ <b>Habis</b> ({abs(sisa)} hari lalu)"
                 status = "EXPIRED"
             elif sisa == 0:
-                info = "⚠️ HABIS HARI INI"
+                remain_txt = "⚠️ <b>Habis hari ini</b>"
             else:
-                info = f"⏳ Sisa {sisa} hari"
+                remain_txt = f"⏳ <b>Sisa {sisa} hari</b>"
         else:
-            info = "⚠️ expire tidak ada"
+            remain_txt = "⚠️ expire tidak ada"
 
-        await update.message.reply_text(
-            f"📧 {email}\n"
-            f"Mulai: {start}\n"
-            f"Durasi: {duration} hari\n"
-            f"Expire: {expire}\n"
-            f"{info}\n"
-            f"HP: {mask_phone(phone)}\n"
-            f"Status: {status}"
+        msg = (
+            "📌 <b>Detail Turnitin</b>\n"
+            f"Email: <code>{email}</code>\n"
+            f"Mulai: <code>{start}</code>\n"
+            f"Durasi: <b>{duration}</b> hari\n"
+            f"Expire: <b>{expire}</b>\n"
+            f"{remain_txt}\n"
+            f"HP: <code>{mask_phone(phone)}</code>\n"
+            f"Status: <b>{status}</b>"
         )
+        await update.message.reply_text(msg, parse_mode="HTML")
+
     except Exception as e:
         await update.message.reply_text(f"❌ Error:\n{e}")
 
 # =====================
-# CANVA
+# CANVA (CEK LIST & CEK EMAIL)
 # =====================
-async def add_canva(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /add_canva email | durasi_hari | no_hp
-    Simpan expire_datetime dengan jam yang sama seperti waktu input.
-    """
-    try:
-        text = update.message.text
-        data = text.replace("/add_canva", "").strip()
-        parts = [p.strip() for p in data.split("|")]
-
-        if len(parts) != 3:
-            await update.message.reply_text(
-                "❌ Format salah.\n"
-                "Pakai:\n"
-                "/add_canva email | durasi_hari | no_hp\n\n"
-                "Contoh:\n"
-                "/add_canva contoh@gmail.com | 30 | 081234567890"
-            )
-            return
-
-        email, duration, phone = parts
-        duration = int(duration)
-
-        now_dt = datetime.now()
-        expire_dt = now_dt + timedelta(days=duration)
-
-        sh = get_spreadsheet()
-        ws = sh.worksheet(CANVA_SHEET)
-
-        ws.append_row([
-            fmt_dt(now_dt),
-            email,
-            duration,
-            fmt_dt(expire_dt),
-            "ACTIVE",
-            phone,
-            "",
-            "", "", "", ""
-        ])
-
-        await update.message.reply_text(
-            f"✅ Canva tersimpan!\n"
-            f"Email: {email}\n"
-            f"Durasi: {duration} hari\n"
-            f"Expire: {fmt_dt(expire_dt)}\n"
-            f"HP: {phone}"
-        )
-
-    except ValueError:
-        await update.message.reply_text("❌ Durasi harus angka (hari). Contoh: 30")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error:\n{e}")
-
 async def cek_canva(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         sh = get_spreadsheet()
@@ -357,7 +304,7 @@ async def cek_canva(update: Update, context: ContextTypes.DEFAULT_TYPE):
             email = str(r.get("email", "")).strip()
             exp_str = str(r.get("expire_datetime", "")).strip()
             phone = str(r.get("customer_phone", "")).strip()
-            status = str(r.get("status", "")).strip() or "UNKNOWN"
+            status = fmt_status(r.get("status", ""))
 
             if exp_str:
                 exp_dt = parse_expire_datetime(exp_str)
@@ -380,8 +327,7 @@ async def cek_canva(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cek_canva_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        text = update.message.text
-        email_query = text.replace("/cek_canva_email", "").strip()
+        email_query = update.message.text.replace("/cek_canva_email", "").strip()
         if not email_query:
             await update.message.reply_text("❌ Format: /cek_canva_email email@domain.com")
             return
@@ -402,32 +348,40 @@ async def cek_canva_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
         email = str(found.get("email", "")).strip()
         exp_str = str(found.get("expire_datetime", "")).strip()
         phone = str(found.get("customer_phone", "")).strip()
-        status = str(found.get("status", "")).strip() or "UNKNOWN"
+        status = fmt_status(found.get("status", ""))
         start = str(found.get("timestamp", "")).strip()
         duration = str(found.get("duration_days", "")).strip()
 
         if exp_str:
             exp_dt = parse_expire_datetime(exp_str)
             td = remaining(exp_dt)
-            info = human_remaining(td)
+            remain_txt = human_remaining(td)
             if td.total_seconds() <= 0:
                 status = "EXPIRED"
+                remain_txt = "❌ HABIS"
         else:
-            info = "⚠️ expire tidak ada"
+            remain_txt = "⚠️ expire tidak ada"
 
-        await update.message.reply_text(
-            f"📧 {email}\n"
-            f"Mulai: {start}\n"
-            f"Durasi: {duration} hari\n"
-            f"Expire: {exp_str}\n"
-            f"{info}\n"
-            f"HP: {mask_phone(phone)}\n"
-            f"Status: {status}"
+        msg = (
+            "🎨 <b>Detail Canva</b>\n"
+            f"Email: <code>{email}</code>\n"
+            f"Mulai: <code>{start}</code>\n"
+            f"Durasi: <b>{duration}</b> hari\n"
+            f"Expire: <b>{exp_str}</b>\n"
+            f"Sisa: <b>{remain_txt}</b>\n"
+            f"HP: <code>{mask_phone(phone)}</code>\n"
+            f"Status: <b>{status}</b>"
         )
+        await update.message.reply_text(msg, parse_mode="HTML")
+
     except Exception as e:
         await update.message.reply_text(f"❌ Error:\n{e}")
 
 async def canva_hampir_habis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /canva_hampir_habis  (default 3 hari)
+    atau /canva_hampir_habis 7
+    """
     try:
         threshold_days = 3
         parts = update.message.text.strip().split()
@@ -473,6 +427,159 @@ async def canva_hampir_habis(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"❌ Error:\n{e}")
 
 # =====================
+# WIZARD - TURNITIN (STEP BY STEP)
+# =====================
+async def add_tii_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📝 <b>Tambah Turnitin</b>\n\n"
+        "1) Kirim <b>EMAIL</b> dulu.\n"
+        "Contoh: <code>example@gmail.com</code>\n\n"
+        "Ketik /cancel untuk batal.",
+        parse_mode="HTML"
+    )
+    return TII_EMAIL
+
+async def add_tii_wizard_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    email = (update.message.text or "").strip()
+    if not is_valid_email(email):
+        await update.message.reply_text("❌ Email tidak valid. Coba kirim email yang benar.")
+        return TII_EMAIL
+
+    context.user_data["tii_email"] = email
+    await update.message.reply_text(
+        "2) Kirim <b>DURASI (hari)</b>.\nContoh: <code>30</code>\n\n/cancel untuk batal.",
+        parse_mode="HTML"
+    )
+    return TII_DURASI
+
+async def add_tii_wizard_durasi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    txt = (update.message.text or "").strip()
+    if not txt.isdigit() or int(txt) <= 0:
+        await update.message.reply_text("❌ Durasi harus angka > 0. Contoh: 30")
+        return TII_DURASI
+
+    context.user_data["tii_duration"] = int(txt)
+    await update.message.reply_text(
+        "3) Kirim <b>NO HP</b> customer.\nContoh: <code>081234567890</code>\n\n/cancel untuk batal.",
+        parse_mode="HTML"
+    )
+    return TII_PHONE
+
+async def add_tii_wizard_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    phone_raw = (update.message.text or "").strip()
+    if not is_valid_phone(phone_raw):
+        await update.message.reply_text("❌ No HP tidak valid / terlalu pendek. Coba lagi.")
+        return TII_PHONE
+
+    phone = clean_phone(phone_raw)
+    email = context.user_data.get("tii_email")
+    duration = int(context.user_data.get("tii_duration", 0))
+
+    try:
+        now_dt = datetime.now()
+        now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+        expire_dt = now_dt + timedelta(days=duration)
+        expire_str = expire_dt.strftime("%Y-%m-%d")
+
+        sh = get_spreadsheet()
+        ws = sh.worksheet(TURNITIN_SHEET)
+        ws.append_row([now_str, email, duration, expire_str, "ACTIVE", phone, ""])
+
+        await update.message.reply_text(
+            "✅ <b>Turnitin tersimpan</b>\n"
+            f"• Email: <code>{email}</code>\n"
+            f"• Durasi: <b>{duration}</b> hari\n"
+            f"• Expire: <b>{expire_str}</b>\n"
+            f"• HP: <code>{phone}</code>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Gagal simpan:\n{e}")
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
+# =====================
+# WIZARD - CANVA (STEP BY STEP)
+# =====================
+async def add_canva_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📝 <b>Tambah Canva</b>\n\n"
+        "1) Kirim <b>EMAIL</b> dulu.\n"
+        "Contoh: <code>example@gmail.com</code>\n\n"
+        "Ketik /cancel untuk batal.",
+        parse_mode="HTML"
+    )
+    return CANVA_EMAIL
+
+async def add_canva_wizard_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    email = (update.message.text or "").strip()
+    if not is_valid_email(email):
+        await update.message.reply_text("❌ Email tidak valid. Coba kirim email yang benar.")
+        return CANVA_EMAIL
+
+    context.user_data["canva_email"] = email
+    await update.message.reply_text(
+        "2) Kirim <b>DURASI (hari)</b>.\nContoh: <code>30</code>\n\n/cancel untuk batal.",
+        parse_mode="HTML"
+    )
+    return CANVA_DURASI
+
+async def add_canva_wizard_durasi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    txt = (update.message.text or "").strip()
+    if not txt.isdigit() or int(txt) <= 0:
+        await update.message.reply_text("❌ Durasi harus angka > 0. Contoh: 30")
+        return CANVA_DURASI
+
+    context.user_data["canva_duration"] = int(txt)
+    await update.message.reply_text(
+        "3) Kirim <b>NO HP</b> customer.\nContoh: <code>081234567890</code>\n\n/cancel untuk batal.",
+        parse_mode="HTML"
+    )
+    return CANVA_PHONE
+
+async def add_canva_wizard_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    phone_raw = (update.message.text or "").strip()
+    if not is_valid_phone(phone_raw):
+        await update.message.reply_text("❌ No HP tidak valid / terlalu pendek. Coba lagi.")
+        return CANVA_PHONE
+
+    phone = clean_phone(phone_raw)
+    email = context.user_data.get("canva_email")
+    duration = int(context.user_data.get("canva_duration", 0))
+
+    try:
+        now_dt = datetime.now()
+        expire_dt = now_dt + timedelta(days=duration)
+
+        sh = get_spreadsheet()
+        ws = sh.worksheet(CANVA_SHEET)
+        ws.append_row([
+            fmt_dt(now_dt),
+            email,
+            duration,
+            fmt_dt(expire_dt),
+            "ACTIVE",
+            phone,
+            "",
+            "", "", "", ""
+        ])
+
+        await update.message.reply_text(
+            "✅ <b>Canva tersimpan</b>\n"
+            f"• Email: <code>{email}</code>\n"
+            f"• Durasi: <b>{duration}</b> hari\n"
+            f"• Expire: <b>{fmt_dt(expire_dt)}</b>\n"
+            f"• HP: <code>{phone}</code>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Gagal simpan:\n{e}")
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
+# =====================
 # REMINDER JOB (OTOMATIS)
 # =====================
 def _flag_is_sent(v) -> bool:
@@ -482,16 +589,16 @@ def _flag_is_sent(v) -> bool:
 async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
     owner_chat_id = load_owner_chat_id()
     if not owner_chat_id:
-        return
+        return  # owner belum set
 
     try:
         sh = get_spreadsheet()
         ws = sh.worksheet(CANVA_SHEET)
         rows = ws.get_all_records()
-
         if not rows:
             return
 
+        # timestamp | email | duration_days | expire_datetime | status | customer_phone | note | rem14_sent | rem7_sent | rem3_sent | rem1h_sent
         remind_msgs = []
 
         for idx, r in enumerate(rows, start=2):
@@ -510,11 +617,15 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
             td = remaining(exp_dt)
             secs = td.total_seconds()
 
+            # update status kalau habis
             if secs <= 0:
                 if str(r.get("status", "")).strip().upper() != "EXPIRED":
-                    ws.update_cell(idx, 5, "EXPIRED")
+                    ws.update_cell(idx, 5, "EXPIRED")  # kolom E = status
                 continue
 
+            # aturan reminder:
+            # - durasi bulanan (>=28 hari): reminder di sisa 14, 7, 3 hari
+            # - durasi < 7 hari: reminder H-1 jam
             if duration_days >= BULANAN_MIN_DAYS:
                 days_left_float = secs / 86400.0
 
@@ -524,15 +635,15 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
 
                 if (days_left_float <= REM_DAYS_14) and (not rem14_sent):
                     remind_msgs.append(f"🔔 Canva 14 hari lagi\n{email}\nExp: {exp_str}\nHP: {mask_phone(phone)}")
-                    ws.update_cell(idx, 8, "TRUE")
+                    ws.update_cell(idx, 8, "TRUE")  # kolom H
 
                 if (days_left_float <= REM_DAYS_7) and (not rem7_sent):
                     remind_msgs.append(f"🔔 Canva 7 hari lagi\n{email}\nExp: {exp_str}\nHP: {mask_phone(phone)}")
-                    ws.update_cell(idx, 9, "TRUE")
+                    ws.update_cell(idx, 9, "TRUE")  # kolom I
 
                 if (days_left_float <= REM_DAYS_3) and (not rem3_sent):
                     remind_msgs.append(f"⚠️ Canva H-3 (siap-siap kick)\n{email}\nExp: {exp_str}\nHP: {mask_phone(phone)}")
-                    ws.update_cell(idx, 10, "TRUE")
+                    ws.update_cell(idx, 10, "TRUE")  # kolom J
 
             elif duration_days < 7:
                 rem1h_sent = _flag_is_sent(r.get("rem1h_sent", ""))
@@ -543,13 +654,14 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
                         f"⏰ Canva H-1 JAM (waktunya kick kalau habis)\n"
                         f"{email}\nExp: {exp_str}\nSisa: {human_remaining(td)}\nHP: {mask_phone(phone)}"
                     )
-                    ws.update_cell(idx, 11, "TRUE")
+                    ws.update_cell(idx, 11, "TRUE")  # kolom K
 
         if remind_msgs:
             for msg in remind_msgs[:20]:
                 await context.bot.send_message(chat_id=owner_chat_id, text=msg)
 
     except Exception:
+        # sengaja diem biar tidak spam, kalau mau debug bisa print(e)
         pass
 
 # =====================
@@ -565,20 +677,40 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("set_owner", set_owner))
     app.add_handler(CommandHandler("test_sheet", test_sheet))
+    app.add_handler(CommandHandler("cancel", cancel))
 
-    # turnitin
-    app.add_handler(CommandHandler("add_tii", add_tii))
+    # wizard turnitin
+    tii_conv = ConversationHandler(
+        entry_points=[CommandHandler("add_tii", add_tii_wizard_start)],
+        states={
+            TII_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_tii_wizard_email)],
+            TII_DURASI: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_tii_wizard_durasi)],
+            TII_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_tii_wizard_phone)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    app.add_handler(tii_conv)
+
+    # wizard canva
+    canva_conv = ConversationHandler(
+        entry_points=[CommandHandler("add_canva", add_canva_wizard_start)],
+        states={
+            CANVA_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_canva_wizard_email)],
+            CANVA_DURASI: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_canva_wizard_durasi)],
+            CANVA_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_canva_wizard_phone)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    app.add_handler(canva_conv)
+
+    # cek-cek
     app.add_handler(CommandHandler("cek_tii", cek_tii))
     app.add_handler(CommandHandler("cek_email", cek_email))
-
-    # canva
-    app.add_handler(CommandHandler("add_canva", add_canva))
     app.add_handler(CommandHandler("cek_canva", cek_canva))
     app.add_handler(CommandHandler("cek_canva_email", cek_canva_email))
     app.add_handler(CommandHandler("canva_hampir_habis", canva_hampir_habis))
 
     # reminder job: cek setiap 1 jam
-    # (akan jalan jika python-telegram-bot[job-queue] terinstall)
     app.job_queue.run_repeating(reminder_job, interval=3600, first=10)
 
     print("Bot sedang berjalan...")
