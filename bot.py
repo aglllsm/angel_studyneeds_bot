@@ -582,12 +582,11 @@ def main():
     # conversation handler (Tambah Akun & Cek Email)
     conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: ConversationHandler.END),  # dummy (biar gak kosong)
-            MessageHandler(filters.Regex(r".*Tambah Akun$"), entry_add),
-            MessageHandler(filters.Regex(r".*Cek Email$"), entry_check),
-            CommandHandler("add", entry_add),
-            CommandHandler("cek", entry_check),
-        ],
+    MessageHandler(filters.Regex(r".*Tambah Akun$"), entry_add),
+    MessageHandler(filters.Regex(r".*Cek Email$"), entry_check),
+    CommandHandler("add", entry_add),
+    CommandHandler("cek", entry_check),
+],
         states={
             ADD_PICK_APP: [CallbackQueryHandler(add_pick_app_cb)],
             ADD_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_email)],
@@ -618,3 +617,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
