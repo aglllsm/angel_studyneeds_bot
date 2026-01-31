@@ -289,27 +289,27 @@ async def entry_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # MENU NON-CONV (tombol lain)
 # ==========================================================
 async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    # Kalau lagi proses conversation, JANGAN ganggu
-    if ctx.user_data:
-        return
-
     text = norm_text(update.message.text)
 
+    # Menu handler cuma respon kalau user benar2 klik tombol menu
     if is_menu_list(text):
         await dashboard(update, ctx)
         return
+
     if is_menu_delete(text):
         await delete_duplicates_all(update, ctx)
         return
+
     if is_menu_owner(text):
         await set_owner(update, ctx)
         return
+
     if is_menu_help(text):
         await help_cmd(update, ctx)
         return
 
-    await update.message.reply_text("Pilih menu ya 🙂", reply_markup=main_menu_kb())
-
+    # selain tombol menu -> DIAM (jangan ganggu input angka/email)
+    return
 
 # ==========================================================
 # ADD FLOW
@@ -675,9 +675,14 @@ def main():
     app.add_handler(conv)
 
     # Menu handler umum (jangan ganggu conversation)
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_other, block=False)
-    )
+    # group 0: conversation (harus paling depan / prioritas)
+app.add_handler(conv, group=0)
+
+# group 1: menu umum (jalan hanya kalau conversation gak nangkep)
+app.add_handler(
+    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_other),
+    group=1
+)
 
     # Reminder
     app.job_queue.run_repeating(reminder_job_all_apps, interval=3600, first=10)
@@ -687,3 +692,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
