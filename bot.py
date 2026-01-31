@@ -14,6 +14,7 @@ from telegram.ext import (
     filters,
 )
 from datetime import datetime, timedelta
+import asyncio
 import os
 import json
 import tempfile
@@ -453,41 +454,44 @@ async def add_phone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # DASHBOARD
 # ==========================================================
 async def dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    sh = get_spreadsheet()
-    now = datetime.now()
-    lines = ["📊 DASHBOARD\n"]
+    await update.message.reply_text("⏳ Lagi ambil dashboard...")
 
-    for _, v in APPS.items():
-        ws = sh.worksheet(v["sheet"])
-        rows = ws.get_all_records()
-        a = e = h3 = h7 = h14 = today = 0
-        for r in rows:
-            try:
-                exp = parse_dt(r["expire_datetime"])
-                secs = (exp - now).total_seconds()
-                if secs <= 0:
-                    e += 1
-                    continue
-                a += 1
-                d = secs / 86400
-                if d <= 14:
-                    h14 += 1
-                if d <= 7:
-                    h7 += 1
-                if d <= 3:
-                    h3 += 1
-                if d <= 0.01:
-                    today += 1
-            except Exception:
-                pass
+    def _work():
+        sh = get_spreadsheet()
+        now = datetime.now()
+        lines = ["📊 DASHBOARD\n"]
 
-        lines.append(
-            f"{v.get('icon','✨')} {v['title']}\n"
-            f"Active: {a} | Expired: {e}\n"
-            f"H14: {h14} | H7: {h7} | H3: {h3} | Today: {today}\n"
-        )
+        for _, v in APPS.items():
+            ws = sh.worksheet(v["sheet"])
+            rows = ws.get_all_records()
+            a = e = h3 = h7 = h14 = today = 0
 
-    await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb())
+            for r in rows:
+                try:
+                    exp = parse_dt(r["expire_datetime"])
+                    secs = (exp - now).total_seconds()
+                    if secs <= 0:
+                        e += 1
+                        continue
+                    a += 1
+                    d = secs / 86400
+                    if d <= 14: h14 += 1
+                    if d <= 7:  h7 += 1
+                    if d <= 3:  h3 += 1
+                    if d <= 0.01: today += 1
+                except:
+                    pass
+
+            lines.append(
+                f"{v.get('icon','✨')} {v['title']}\n"
+                f"Active: {a} | Expired: {e}\n"
+                f"H14: {h14} | H7: {h7} | H3: {h3} | Today: {today}\n"
+            )
+
+        return "\n".join(lines)
+
+    text = await asyncio.to_thread(_work)
+    await update.message.reply_text(text, reply_markup=main_menu_kb())
 
 
 # ==========================================================
@@ -569,40 +573,41 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # DELETE DUPLICATES
 # ==========================================================
 async def delete_duplicates_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    sh = get_spreadsheet()
-    total_deleted = 0
-    per_app = []
+    await update.message.reply_text("🧹 Lagi hapus email dobel...")
 
-    for _, v in APPS.items():
-        ws = sh.worksheet(v["sheet"])
-        rows = ws.get_all_records()
-        seen = set()
-        to_delete_rownums = []
+    def _work():
+        sh = get_spreadsheet()
+        total_deleted = 0
+        per_app = []
 
-        for idx, r in enumerate(rows, start=2):
-            em = str(r.get("email", "")).strip().lower()
-            if not em:
-                continue
-            if em in seen:
-                to_delete_rownums.append(idx)
-            else:
-                seen.add(em)
+        for _, v in APPS.items():
+            ws = sh.worksheet(v["sheet"])
+            rows = ws.get_all_records()
+            seen = set()
+            to_delete_rownums = []
 
-        for rn in sorted(to_delete_rownums, reverse=True):
-            ws.delete_rows(rn)
+            for idx, r in enumerate(rows, start=2):
+                em = str(r.get("email", "")).strip().lower()
+                if not em:
+                    continue
+                if em in seen:
+                    to_delete_rownums.append(idx)
+                else:
+                    seen.add(em)
 
-        if to_delete_rownums:
-            per_app.append(f"{v['title']}: {len(to_delete_rownums)}")
-            total_deleted += len(to_delete_rownums)
+            for rn in sorted(to_delete_rownums, reverse=True):
+                ws.delete_rows(rn)
 
-    if total_deleted == 0:
-        await update.message.reply_text("✅ Tidak ada email dobel.", reply_markup=main_menu_kb())
-    else:
-        await update.message.reply_text(
-            "🗑 Duplikat dihapus:\n" + "\n".join(per_app) + f"\n\nTotal: {total_deleted}",
-            reply_markup=main_menu_kb(),
-        )
+            if to_delete_rownums:
+                per_app.append(f"{v['title']}: {len(to_delete_rownums)}")
+                total_deleted += len(to_delete_rownums)
 
+        if total_deleted == 0:
+            return "✅ Tidak ada email dobel."
+        return "🗑 Duplikat dihapus:\n" + "\n".join(per_app) + f"\n\nTotal: {total_deleted}"
+
+    result = await asyncio.to_thread(_work)
+    await update.message.reply_text(result, reply_markup=main_menu_kb())
 
 # ==========================================================
 # REMINDER JOB
@@ -733,6 +738,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
