@@ -291,24 +291,19 @@ async def entry_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = norm_text(update.message.text)
 
-    # Menu handler cuma respon kalau user benar2 klik tombol menu
     if is_menu_list(text):
         await dashboard(update, ctx)
         return
-
     if is_menu_delete(text):
         await delete_duplicates_all(update, ctx)
         return
-
     if is_menu_owner(text):
         await set_owner(update, ctx)
         return
-
     if is_menu_help(text):
         await help_cmd(update, ctx)
         return
 
-    # selain tombol menu -> DIAM (jangan ganggu input angka/email)
     return
 
 # ==========================================================
@@ -688,5 +683,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
