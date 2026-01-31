@@ -665,6 +665,79 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
         pass
 
 # =====================
+# DELETE DATA (ANTI DOUBLE)
+# =====================
+
+async def del_tii(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        email = update.message.text.replace("/del_tii", "").strip()
+        if not email:
+            await update.message.reply_text("❌ Format:\n/del_tii email@domain.com")
+            return
+
+        sh = get_spreadsheet()
+        ws = sh.worksheet(TURNITIN_SHEET)
+        rows = ws.get_all_records()
+
+        target_rows = []
+        for i, r in enumerate(rows, start=2):  # mulai row 2 (header)
+            if str(r.get("email", "")).strip().lower() == email.lower():
+                target_rows.append(i)
+
+        if not target_rows:
+            await update.message.reply_text("❌ Email tidak ditemukan di data Turnitin.")
+            return
+
+        # hapus dari bawah biar index aman
+        for row_idx in reversed(target_rows):
+            ws.delete_rows(row_idx)
+
+        await update.message.reply_text(
+            f"🗑️ <b>Turnitin dihapus</b>\n"
+            f"Email: <code>{email}</code>\n"
+            f"Jumlah data dihapus: <b>{len(target_rows)}</b>",
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error:\n{e}")
+
+
+async def del_canva(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        email = update.message.text.replace("/del_canva", "").strip()
+        if not email:
+            await update.message.reply_text("❌ Format:\n/del_canva email@domain.com")
+            return
+
+        sh = get_spreadsheet()
+        ws = sh.worksheet(CANVA_SHEET)
+        rows = ws.get_all_records()
+
+        target_rows = []
+        for i, r in enumerate(rows, start=2):
+            if str(r.get("email", "")).strip().lower() == email.lower():
+                target_rows.append(i)
+
+        if not target_rows:
+            await update.message.reply_text("❌ Email tidak ditemukan di data Canva.")
+            return
+
+        for row_idx in reversed(target_rows):
+            ws.delete_rows(row_idx)
+
+        await update.message.reply_text(
+            f"🗑️ <b>Canva dihapus</b>\n"
+            f"Email: <code>{email}</code>\n"
+            f"Jumlah data dihapus: <b>{len(target_rows)}</b>",
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error:\n{e}")
+
+
+# =====================
 # MAIN
 # =====================
 def main():
@@ -678,6 +751,9 @@ def main():
     app.add_handler(CommandHandler("set_owner", set_owner))
     app.add_handler(CommandHandler("test_sheet", test_sheet))
     app.add_handler(CommandHandler("cancel", cancel))
+    app.add_handler(CommandHandler("del_tii", del_tii))
+    app.add_handler(CommandHandler("del_canva", del_canva))
+
 
     # wizard turnitin
     tii_conv = ConversationHandler(
@@ -718,3 +794,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
