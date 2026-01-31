@@ -14,7 +14,9 @@ from telegram.ext import (
     filters,
 )
 from datetime import datetime, timedelta
-import os, json, tempfile
+import os
+import json
+import tempfile
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -37,6 +39,7 @@ MENU_DELETE = "🗑 Hapus Email Dobel"
 MENU_OWNER = "⚙️ Set Owner"
 MENU_HELP = "ℹ️ Bantuan"
 
+
 def main_menu_kb():
     return ReplyKeyboardMarkup(
         [
@@ -44,8 +47,9 @@ def main_menu_kb():
             [MENU_CHECK, MENU_DELETE],
             [MENU_OWNER, MENU_HELP],
         ],
-        resize_keyboard=True
+        resize_keyboard=True,
     )
+
 
 def apps_inline_kb(prefix: str):
     items = list(APPS.items())
@@ -54,7 +58,9 @@ def apps_inline_kb(prefix: str):
     for k, v in items:
         icon = v.get("icon", "✨")
         title = v.get("title", k)
-        row.append(InlineKeyboardButton(f"{icon} {title}", callback_data=f"{prefix}:{k}"))
+        row.append(
+            InlineKeyboardButton(f"{icon} {title}", callback_data=f"{prefix}:{k}")
+        )
         if len(row) == 2:
             buttons.append(row)
             row = []
@@ -64,6 +70,7 @@ def apps_inline_kb(prefix: str):
     buttons.append([InlineKeyboardButton("❌ Batal", callback_data="CANCEL")])
     return InlineKeyboardMarkup(buttons)
 
+
 # ==========================================================
 # HELPERS
 # ==========================================================
@@ -71,21 +78,27 @@ def is_valid_email(e: str) -> bool:
     e = (e or "").strip()
     return ("@" in e) and ("." in e) and (len(e) >= 6)
 
+
 def clean_phone(p):
     return "".join(c for c in str(p) if c.isdigit())
 
+
 def is_valid_phone(p) -> bool:
     return len(clean_phone(p)) >= 8
+
 
 def mask_phone(p: str) -> str:
     p = str(p or "")
     return p[:4] + "****" + p[-4:] if len(p) >= 8 else p
 
+
 def fmt_dt(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
+
 def parse_dt(s: str) -> datetime:
     return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+
 
 def human(td):
     s = int(td.total_seconds())
@@ -100,45 +113,53 @@ def human(td):
         return f"{h} jam {m} menit"
     return f"{m} menit"
 
+
 def _flag(v):
     return str(v).strip().lower() in ("1", "true", "yes", "sent", "done")
 
+
 def norm_text(t: str) -> str:
-    # Normalisasi ringan biar gak sensitif emoji/variasi spasi Telegram
     t = (t or "").strip()
     t = " ".join(t.split())
     return t
 
+
 def is_menu_check(t: str) -> bool:
     t = norm_text(t)
-    # Accept "🔎 Cek Email", "🔍 Cek Email", "Cek Email"
     return t.endswith("Cek Email") or t == "Cek Email"
+
 
 def is_menu_add(t: str) -> bool:
     t = norm_text(t)
     return t.endswith("Tambah Akun") or t == "Tambah Akun"
 
+
 def is_menu_list(t: str) -> bool:
     t = norm_text(t)
     return t.endswith("Cek List") or t == "Cek List"
+
 
 def is_menu_delete(t: str) -> bool:
     t = norm_text(t)
     return t.endswith("Hapus Email Dobel") or t == "Hapus Email Dobel"
 
+
 def is_menu_owner(t: str) -> bool:
     t = norm_text(t)
     return t.endswith("Set Owner") or t == "Set Owner"
 
+
 def is_menu_help(t: str) -> bool:
     t = norm_text(t)
     return t.endswith("Bantuan") or t == "Bantuan"
+
 
 # ==========================================================
 # GOOGLE SHEET (cache biar gak authorize terus)
 # ==========================================================
 _GC = None
 _SH = None
+
 
 def get_spreadsheet():
     global _GC, _SH
@@ -165,13 +186,15 @@ def get_spreadsheet():
     finally:
         try:
             os.remove(path)
-        except:
+        except Exception:
             pass
+
 
 def ws_for_app(sh, app_key: str):
     if app_key not in APPS:
         raise ValueError("App tidak dikenali.")
     return sh.worksheet(APPS[app_key]["sheet"])
+
 
 # ==========================================================
 # OWNER
@@ -180,11 +203,13 @@ def save_owner(cid: int):
     with open(OWNER_FILE, "w") as f:
         f.write(str(cid))
 
+
 def load_owner():
     try:
         return int(open(OWNER_FILE).read().strip())
-    except:
+    except Exception:
         return None
+
 
 # ==========================================================
 # CONVERSATION STATES
@@ -192,11 +217,15 @@ def load_owner():
 ADD_PICK_APP, ADD_EMAIL, ADD_DAYS, ADD_PHONE = range(4)
 CHECK_EMAIL = 10
 
+
 # ==========================================================
 # COMMANDS
 # ==========================================================
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤍 Angel Studyneeds Bot", reply_markup=main_menu_kb())
+    await update.message.reply_text(
+        "🤍 Angel Studyneeds Bot", reply_markup=main_menu_kb()
+    )
+
 
 async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -209,12 +238,17 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "Ketik /cancel untuk batal saat proses input.\n\n"
         "Command cepat:\n"
         "/add, /cek, /list, /dupes, /owner",
-        reply_markup=main_menu_kb()
+        reply_markup=main_menu_kb(),
     )
+
 
 async def set_owner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     save_owner(update.effective_chat.id)
-    await update.message.reply_text("✅ Owner disimpan. Reminder akan dikirim ke chat ini.", reply_markup=main_menu_kb())
+    await update.message.reply_text(
+        "✅ Owner disimpan. Reminder akan dikirim ke chat ini.",
+        reply_markup=main_menu_kb(),
+    )
+
 
 async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
@@ -222,31 +256,43 @@ async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Dibatalkan.", reply_markup=main_menu_kb())
     return ConversationHandler.END
 
+
 async def cancel_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     try:
         await q.edit_message_text("❌ Dibatalkan.")
-    except:
+    except Exception:
         pass
     ctx.user_data.clear()
     return ConversationHandler.END
 
+
 # ==========================================================
-# ENTRY POINTS (anti “nyasar ke menu”)
+# ENTRY POINTS
 # ==========================================================
 async def entry_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Pilih aplikasi yang mau ditambah:", reply_markup=apps_inline_kb("ADD"))
+    await update.message.reply_text(
+        "Pilih aplikasi yang mau ditambah:", reply_markup=apps_inline_kb("ADD")
+    )
     return ADD_PICK_APP
 
+
 async def entry_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Ketik email yang mau dicek (contoh: user@gmail.com)\n/cancel untuk batal")
+    await update.message.reply_text(
+        "Ketik email yang mau dicek (contoh: user@gmail.com)\n/cancel untuk batal"
+    )
     return CHECK_EMAIL
+
 
 # ==========================================================
 # MENU NON-CONV (tombol lain)
 # ==========================================================
 async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # Kalau lagi proses conversation, JANGAN ganggu
+    if ctx.user_data:
+        return
+
     text = norm_text(update.message.text)
 
     if is_menu_list(text):
@@ -260,14 +306,10 @@ async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     if is_menu_help(text):
         await help_cmd(update, ctx)
-    if ctx.user_data:
         return
 
-    text = norm_text(update.message.text)
-    ...
-
-    # kalau ngetik random saat tidak ada proses conv
     await update.message.reply_text("Pilih menu ya 🙂", reply_markup=main_menu_kb())
+
 
 # ==========================================================
 # ADD FLOW
@@ -279,7 +321,6 @@ async def add_pick_app_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if q.data == "CANCEL":
         return await cancel_cb(update, ctx)
 
-    # HARUS format "ADD:<app_key>"
     if ":" not in q.data:
         await q.edit_message_text("❌ Callback tidak valid.")
         return ConversationHandler.END
@@ -299,6 +340,7 @@ async def add_pick_app_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return ADD_EMAIL
 
+
 async def add_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     email = (update.message.text or "").strip()
     if not is_valid_email(email):
@@ -308,6 +350,7 @@ async def add_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["add_email"] = email
     await update.message.reply_text("Masukkan durasi dalam HARI (contoh 30):\n/cancel untuk batal")
     return ADD_DAYS
+
 
 async def add_days(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     t = (update.message.text or "").strip()
@@ -323,6 +366,7 @@ async def add_days(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["add_days"] = days
     await update.message.reply_text("Masukkan nomor WA customer (contoh: 08xxxx):\n/cancel untuk batal")
     return ADD_PHONE
+
 
 async def add_phone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     phone_raw = (update.message.text or "").strip()
@@ -343,8 +387,17 @@ async def add_phone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     headers = ws.row_values(1)
     need = [
-        "created_datetime", "email", "duration_days", "expire_datetime", "status",
-        "customer_phone", "rem14_sent", "rem7_sent", "rem3_sent", "rem1h_sent", "rem1d_sent"
+        "created_datetime",
+        "email",
+        "duration_days",
+        "expire_datetime",
+        "status",
+        "customer_phone",
+        "rem14_sent",
+        "rem7_sent",
+        "rem3_sent",
+        "rem1h_sent",
+        "rem1d_sent",
     ]
     missing = [h for h in need if h not in headers]
     if missing:
@@ -352,7 +405,7 @@ async def add_phone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "❌ Header sheet belum lengkap.\n"
             f"Kurang kolom: {', '.join(missing)}\n"
             "Samakan header row 1 sesuai kebutuhan bot.",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(),
         )
         ctx.user_data.clear()
         return ConversationHandler.END
@@ -380,11 +433,12 @@ async def add_phone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"Durasi: {days} hari\n"
         f"Expire: {fmt_dt(exp)}\n"
         f"HP: {phone}",
-        reply_markup=main_menu_kb()
+        reply_markup=main_menu_kb(),
     )
 
     ctx.user_data.clear()
     return ConversationHandler.END
+
 
 # ==========================================================
 # DASHBOARD
@@ -394,7 +448,7 @@ async def dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
     lines = ["📊 DASHBOARD\n"]
 
-    for k, v in APPS.items():
+    for _, v in APPS.items():
         ws = sh.worksheet(v["sheet"])
         rows = ws.get_all_records()
         a = e = h3 = h7 = h14 = today = 0
@@ -407,11 +461,15 @@ async def dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     continue
                 a += 1
                 d = secs / 86400
-                if d <= 14: h14 += 1
-                if d <= 7:  h7 += 1
-                if d <= 3:  h3 += 1
-                if d <= 0.01: today += 1
-            except:
+                if d <= 14:
+                    h14 += 1
+                if d <= 7:
+                    h7 += 1
+                if d <= 3:
+                    h3 += 1
+                if d <= 0.01:
+                    today += 1
+            except Exception:
                 pass
 
         lines.append(
@@ -421,6 +479,7 @@ async def dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
     await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb())
+
 
 # ==========================================================
 # CHECK EMAIL FLOW
@@ -435,10 +494,9 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines = [f"🔎 HASIL CEK: {email}\n"]
     found = False
     now = datetime.now()
-
     email_l = email.lower()
 
-    for k, v in APPS.items():
+    for _, v in APPS.items():
         ws = sh.worksheet(v["sheet"])
         rows = ws.get_all_records()
         for r in rows:
@@ -447,7 +505,7 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 try:
                     exp = parse_dt(r["expire_datetime"])
                     sisa = human(exp - now)
-                except:
+                except Exception:
                     sisa = "?"
                 lines.append(
                     f"{v.get('icon','✨')} {v['title']}\n"
@@ -463,6 +521,7 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
+
 # ==========================================================
 # DELETE DUPLICATES
 # ==========================================================
@@ -471,7 +530,7 @@ async def delete_duplicates_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     total_deleted = 0
     per_app = []
 
-    for k, v in APPS.items():
+    for _, v in APPS.items():
         ws = sh.worksheet(v["sheet"])
         rows = ws.get_all_records()
         seen = set()
@@ -498,8 +557,9 @@ async def delete_duplicates_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(
             "🗑 Duplikat dihapus:\n" + "\n".join(per_app) + f"\n\nTotal: {total_deleted}",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(),
         )
+
 
 # ==========================================================
 # REMINDER JOB
@@ -512,7 +572,7 @@ async def reminder_job_all_apps(ctx: ContextTypes.DEFAULT_TYPE):
     sh = get_spreadsheet()
     now = datetime.now()
 
-    for k, v in APPS.items():
+    for _, v in APPS.items():
         ws = sh.worksheet(v["sheet"])
         rows = ws.get_all_records()
         msgs = []
@@ -555,11 +615,14 @@ async def reminder_job_all_apps(ctx: ContextTypes.DEFAULT_TYPE):
                     if secs / 3600 <= 1 and not _flag(r.get("rem1h_sent")):
                         msgs.append(f"{r.get('email','')} | H-1 JAM | {mask_phone(r.get('customer_phone',''))}")
                         set_flag(i, "rem1h_sent")
-            except:
+            except Exception:
                 pass
 
         if msgs:
-            await ctx.bot.send_message(owner, f"🔔 {v.get('icon','✨')} {v['title']}\n" + "\n".join(msgs))
+            await ctx.bot.send_message(
+                owner, f"🔔 {v.get('icon','✨')} {v['title']}\n" + "\n".join(msgs)
+            )
+
 
 # ==========================================================
 # MAIN
@@ -570,27 +633,27 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # commands
+    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("set_owner", set_owner))
     app.add_handler(CommandHandler("owner", set_owner))
     app.add_handler(CommandHandler("cancel", cancel))
 
-    # command cepat (opsional tapi bikin aman)
+    # Command cepat (opsional)
     app.add_handler(CommandHandler("add", entry_add))
     app.add_handler(CommandHandler("cek", entry_check))
     app.add_handler(CommandHandler("list", dashboard))
     app.add_handler(CommandHandler("dupes", delete_duplicates_all))
 
-    # conversation handler (Tambah Akun & Cek Email)
+    # Conversation handler (Tambah Akun & Cek Email)
     conv = ConversationHandler(
         entry_points=[
-    MessageHandler(filters.Regex(r".*Tambah Akun$"), entry_add),
-    MessageHandler(filters.Regex(r".*Cek Email$"), entry_check),
-    CommandHandler("add", entry_add),
-    CommandHandler("cek", entry_check),
-],
+            MessageHandler(filters.Regex(r".*Tambah Akun$"), entry_add),
+            MessageHandler(filters.Regex(r".*Cek Email$"), entry_check),
+            CommandHandler("add", entry_add),
+            CommandHandler("cek", entry_check),
+        ],
         states={
             ADD_PICK_APP: [CallbackQueryHandler(add_pick_app_cb)],
             ADD_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_email)],
@@ -602,7 +665,7 @@ def main():
             CommandHandler("cancel", cancel),
             CallbackQueryHandler(cancel_cb, pattern="^CANCEL$"),
         ],
-        allow_reentry=True,   # lebih aman: kalau kepencet menu lagi, tetap bisa masuk flow
+        allow_reentry=True,
         per_chat=True,
         per_user=True,
         per_message=False,
@@ -611,17 +674,16 @@ def main():
     # IMPORTANT: conv dulu, baru handler menu umum
     app.add_handler(conv)
 
-    # handler untuk tombol lain (list/delete/owner/help) dan random text
-   app.add_handler(
-    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_other),
-    block=False
-)
-    # reminder
+    # Menu handler umum (jangan ganggu conversation)
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_other, block=False)
+    )
+
+    # Reminder
     app.job_queue.run_repeating(reminder_job_all_apps, interval=3600, first=10)
 
     app.run_polling()
 
+
 if __name__ == "__main__":
     main()
-
-
