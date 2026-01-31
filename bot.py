@@ -267,6 +267,12 @@ async def cancel_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
     return ConversationHandler.END
 
+async def conv_timeout(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data.clear()
+    if update.message:
+        await update.message.reply_text("⏳ Timeout. Ulangi dari menu ya.", reply_markup=main_menu_kb())
+    return ConversationHandler.END
+
 
 # ==========================================================
 # ENTRY POINTS
@@ -289,6 +295,9 @@ async def entry_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # MENU NON-CONV (tombol lain)
 # ==========================================================
 async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if ctx.user_data:
+        return
+
     text = norm_text(update.message.text)
 
     if is_menu_list(text):
@@ -304,6 +313,7 @@ async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await help_cmd(update, ctx)
         return
 
+    # selain tombol menu -> DIAM
     return
 
 # ==========================================================
@@ -485,7 +495,8 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Email tidak valid. Coba lagi:\n/cancel untuk batal")
         return CHECK_EMAIL
 
-    await update.message.reply_text("🔎 Mengecek email di semua app...")  # biar user tau bot lagi kerja
+    # DEBUG (hapus nanti kalau sudah beres)
+    await update.message.reply_text("DEBUG: masuk check_email_step")
 
     sh = get_spreadsheet()
     now = datetime.now()
@@ -497,8 +508,8 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     for app_key, v in APPS.items():
         try:
-            ws = sh.worksheet(v["sheet"])           # bisa error kalau nama tab beda
-            values = ws.get_all_values()            # lebih cepat dari get_all_records
+            ws = sh.worksheet(v["sheet"])      # bisa error kalau nama tab beda
+            values = ws.get_all_values()       # lebih cepat dari get_all_records
             if not values or len(values) < 2:
                 continue
 
@@ -528,24 +539,22 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     sisa = "?"
 
                 lines.append(
-                    f"{v.get('icon','✨')} {v['title']}\n"
+                    f"{v.get('icon','✨')} {v.get('title', app_key)}\n"
                     f"Expire: {exp_str} ({sisa})\n"
                     f"Status: {status}\n"
                     f"HP: {mask_phone(phone)}\n"
                 )
 
         except Exception as e:
-            # jangan bikin bot diam. Skip sheet yang error.
             errors.append(f"{v.get('title', app_key)}: {type(e).__name__}")
             continue
 
     if not found:
         lines.append("❌ Tidak ketemu di semua app.")
 
-    # kalau ada tab bermasalah, kasih info singkat (biar kamu tau harus rename tab)
     if errors:
         lines.append("\n⚠️ Ada tab yang error (cek nama tab di Google Sheet):")
-        lines.extend([f"- {x}" for x in errors[:5]])
+        lines.extend([f"- {x}" for x in errors[:10]])
 
     await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb())
     return ConversationHandler.END
@@ -676,28 +685,30 @@ def main():
 
     # Conversation handler (Tambah Akun & Cek Email)
     conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Regex(r".*Tambah Akun$"), entry_add),
-            MessageHandler(filters.Regex(r".*Cek Email$"), entry_check),
-            CommandHandler("add", entry_add),
-            CommandHandler("cek", entry_check),
-        ],
-        states={
-            ADD_PICK_APP: [CallbackQueryHandler(add_pick_app_cb)],
-            ADD_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_email)],
-            ADD_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_days)],
-            ADD_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_phone)],
-            CHECK_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, check_email_step)],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            CallbackQueryHandler(cancel_cb, pattern="^CANCEL$"),
-        ],
-        allow_reentry=True,
-        per_chat=True,
-        per_user=True,
-        per_message=False,
-    )
+    entry_points=[
+        MessageHandler(filters.Regex(r".*Tambah Akun$"), entry_add),
+        MessageHandler(filters.Regex(r".*Cek Email$"), entry_check),
+        CommandHandler("add", entry_add),
+        CommandHandler("cek", entry_check),
+    ],
+    states={
+        ADD_PICK_APP: [CallbackQueryHandler(add_pick_app_cb)],
+        ADD_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_email)],
+        ADD_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_days)],
+        ADD_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_phone)],
+        CHECK_EMAIL: [MessageHandler(filters.ALL & ~filters.COMMAND, check_email_step)],
+        ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, conv_timeout)],
+    },
+    fallbacks=[
+        CommandHandler("cancel", cancel),
+        CallbackQueryHandler(cancel_cb, pattern="^CANCEL$"),
+    ],
+    allow_reentry=True,
+    per_chat=True,
+    per_user=True,
+    per_message=False,
+    conversation_timeout=300,
+)
 
     # group 0: conversation harus paling prioritas
     app.add_handler(conv, group=0)
@@ -716,6 +727,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
