@@ -671,20 +671,16 @@ def main():
         per_message=False,
     )
 
-    # IMPORTANT: conv dulu, baru handler menu umum
-    app.add_handler(conv)
+    # group 0: conversation harus paling prioritas
+    app.add_handler(conv, group=0)
 
-    # Menu handler umum (jangan ganggu conversation)
-    # group 0: conversation (harus paling depan / prioritas)
-app.add_handler(conv, group=0)
+    # group 1: menu umum (jalan hanya untuk tombol menu, dan gak ganggu conversation)
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_other),
+        group=1
+    )
 
-# group 1: menu umum (jalan hanya kalau conversation gak nangkep)
-app.add_handler(
-    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_other),
-    group=1
-)
-
-    # Reminder
+    # reminder
     app.job_queue.run_repeating(reminder_job_all_apps, interval=3600, first=10)
 
     app.run_polling()
@@ -692,4 +688,5 @@ app.add_handler(
 
 if __name__ == "__main__":
     main()
+
 
