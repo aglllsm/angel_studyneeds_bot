@@ -547,8 +547,9 @@ def main():
     # Conversation: ADD + CHECK (menu-based)
     conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu)
-        ],
+    MessageHandler(filters.Regex(f"^{MENU_ADD}$"), handle_menu),
+    MessageHandler(filters.Regex(f"^{MENU_CHECK}$"), handle_menu),
+],
         states={
             ADD_PICK_APP: [
                 CallbackQueryHandler(add_pick_app_cb),
@@ -585,4 +586,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
