@@ -46,72 +46,26 @@ def main_menu_kb():
         ],
         resize_keyboard=True
     )
-
 def apps_inline_kb(prefix: str):
     buttons = []
-
-    # 🔥 TURNITIN (KHUSUS, SELALU MUNCUL)
-    buttons.append([
-        InlineKeyboardButton("📚 Turnitin", callback_data=f"{prefix}:turnitin")
-    ])
-
-    # ✨ Aplikasi lain dari APPS
     row = []
+
     for k, v in APPS.items():
         row.append(
-            InlineKeyboardButton(f"✨ {v['title']}", callback_data=f"{prefix}:{k}")
+            InlineKeyboardButton(
+                f"{v.get('icon','✨')} {v['title']}",
+                callback_data=f"{prefix}:{k}"
+            )
         )
         if len(row) == 2:
             buttons.append(row)
             row = []
+
     if row:
         buttons.append(row)
 
-    # ❌ Batal
-    buttons.append([
-        InlineKeyboardButton("❌ Batal", callback_data="CANCEL")
-    ])
-
+    buttons.append([InlineKeyboardButton("❌ Batal", callback_data="CANCEL")])
     return InlineKeyboardMarkup(buttons)
-
-# ==========================================================
-# HELPERS
-# ==========================================================
-def is_valid_email(e: str) -> bool:
-    e = (e or "").strip()
-    return ("@" in e) and ("." in e) and (len(e) >= 6)
-
-def clean_phone(p):
-    return "".join(c for c in str(p) if c.isdigit())
-
-def is_valid_phone(p) -> bool:
-    return len(clean_phone(p)) >= 8
-
-def mask_phone(p: str) -> str:
-    p = str(p or "")
-    return p[:4] + "****" + p[-4:] if len(p) >= 8 else p
-
-def fmt_dt(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
-
-def parse_dt(s: str) -> datetime:
-    return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
-
-def human(td):
-    s = int(td.total_seconds())
-    if s <= 0:
-        return "❌ HABIS"
-    d = s // 86400
-    h = (s % 86400) // 3600
-    m = (s % 3600) // 60
-    if d > 0:
-        return f"{d} hari {h} jam"
-    if h > 0:
-        return f"{h} jam {m} menit"
-    return f"{m} menit"
-
-def _flag(v):
-    return str(v).strip().lower() in ("1", "true", "yes", "sent", "done")
 
 # ==========================================================
 # GOOGLE SHEET
@@ -586,5 +540,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
