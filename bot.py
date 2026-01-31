@@ -283,19 +283,21 @@ async def entry_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return ADD_PICK_APP
 
-
 async def entry_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data.clear()                 # bersihin state lama
+    ctx.user_data["check_mode"] = True    # 🔥 INI DIA TEMPATNYA
+
     await update.message.reply_text(
         "Ketik email yang mau dicek (contoh: user@gmail.com)\n/cancel untuk batal"
     )
     return CHECK_EMAIL
 
-
 # ==========================================================
 # MENU NON-CONV (tombol lain)
 # ==========================================================
 async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if ctx.user_data:
+    # block menu HANYA kalau lagi proses add/check (bukan sekadar user_data ada isi)
+    if any(k in ctx.user_data for k in ("add_app", "add_email", "add_days", "check_mode")):
         return
 
     text = norm_text(update.message.text)
@@ -303,17 +305,19 @@ async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if is_menu_list(text):
         await dashboard(update, ctx)
         return
+
     if is_menu_delete(text):
         await delete_duplicates_all(update, ctx)
         return
+
     if is_menu_owner(text):
         await set_owner(update, ctx)
         return
+
     if is_menu_help(text):
         await help_cmd(update, ctx)
         return
 
-    # selain tombol menu -> DIAM
     return
 
 # ==========================================================
@@ -555,9 +559,11 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if errors:
         lines.append("\n⚠️ Ada tab yang error (cek nama tab di Google Sheet):")
         lines.extend([f"- {x}" for x in errors[:10]])
+        
+        await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb())
+        ctx.user_data.clear()   # 🔥 WAJIB biar menu hidup lagi
+        return ConversationHandler.END
 
-    await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb())
-    return ConversationHandler.END
 
 # ==========================================================
 # DELETE DUPLICATES
@@ -727,6 +733,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
