@@ -486,7 +486,6 @@ async def dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         if d <= 0.01:
                             today += 1
                     except Exception:
-                        # skip baris yg format tanggalnya aneh
                         pass
 
                 lines.append(
@@ -495,7 +494,7 @@ async def dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     f"H14: {h14} | H7: {h7} | H3: {h3} | Today: {today}\n"
                 )
 
-                        except Exception as e:
+            except Exception as e:
                 errors.append(
                     f"{v.get('title','?')}: {type(e).__name__} - {str(e)[:120]}"
                 )
@@ -511,8 +510,7 @@ async def dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         text = await asyncio.wait_for(asyncio.to_thread(_work), timeout=60)
     except asyncio.TimeoutError:
         await update.message.reply_text(
-            "⏳ Dashboard terlalu lama (timeout).\n"
-            "Biasanya karena sheet besar banget / ada tab yang bermasalah."
+            "⏳ Dashboard terlalu lama (timeout). Biasanya ada tab bermasalah / sheet kebesaran."
         )
         return
 
@@ -776,6 +774,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
