@@ -1,7 +1,27 @@
+# ==========================================================
+# REMINDER CONFIG
+# ==========================================================
+
+# minimal hari agar dianggap "bulanan"
+BULANAN_MIN_DAYS = 28
+
+# reminder hari
+REM_DAYS_14 = 14
+REM_DAYS_7  = 7
+REM_DAYS_3  = 3
+
+# reminder jam (untuk durasi < bulanan)
+REM_HOURS_1 = 1
+
+
+# ==========================================================
+# APPS CONFIG
+# ==========================================================
+
 APPS = {
     "turnitin": {
         "title": "Turnitin",
-        "sheet": "turnitin",
+        "sheet": "turnitin",      # tab Google Sheet
         "icon": "📚"
     },
     "canva": {
@@ -16,7 +36,7 @@ APPS = {
     },
     "scite_ai": {
         "title": "Scite AI",
-        "sheet": "scite ai",
+        "sheet": "scite_ai",      # ⬅️ TANPA SPASI
         "icon": "✨"
     },
     "duolingo": {
@@ -26,7 +46,7 @@ APPS = {
     },
     "ms365": {
         "title": "MS 365",
-        "sheet": "ms 365",
+        "sheet": "ms365",         # ⬅️ TANPA SPASI
         "icon": "✨"
     },
     "camscanner": {
