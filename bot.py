@@ -98,12 +98,24 @@ def load_owner():
 # ==========================================================
 # COMMANDS BASIC
 # ==========================================================
-async def start(update, ctx):
-    await update.message.reply_text("🤍 Angel Studyneeds Bot", reply_markup=main_menu_kb())
+async def handle_menu(update, ctx):
+    text = update.message.text
 
-async def set_owner(update, ctx):
-    save_owner(update.effective_chat.id)
-    await update.message.reply_text("✅ Owner disimpan")
+    if text == MENU_ADD:
+        await update.message.reply_text("➕ Tambah Akun dipilih (next: form input)")
+    elif text == MENU_LIST:
+        await dashboard(update, ctx)
+    elif text == MENU_CHECK:
+        await update.message.reply_text("🔎 Cek Email dipilih")
+    elif text == MENU_DELETE:
+        await update.message.reply_text("🗑 Hapus Email Dobel dipilih")
+    elif text == MENU_OWNER:
+        await set_owner(update, ctx)
+    elif text == MENU_HELP:
+        await update.message.reply_text(
+            "ℹ️ Gunakan menu di bawah untuk mengelola akun",
+            reply_markup=main_menu_kb()
+        )
 
 # ==========================================================
 # DASHBOARD (1)
@@ -244,21 +256,25 @@ async def reminder_job_all_apps(ctx):
 # MAIN
 # ==========================================================
 def main():
-    app=Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start",start))
-    app.add_handler(CommandHandler("set_owner",set_owner))
-    app.add_handler(CommandHandler("dashboard",dashboard))
-    app.add_handler(CommandHandler("to_kick",to_kick))
-    app.add_handler(CommandHandler("search",search_any))
-    app.add_handler(CommandHandler("extend",extend_app))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("set_owner", set_owner))
+    app.add_handler(CommandHandler("dashboard", dashboard))
+    app.add_handler(CommandHandler("to_kick", to_kick))
+    app.add_handler(CommandHandler("search", search_any))
+    app.add_handler(CommandHandler("extend", extend_app))
+
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu)
+    )
 
     app.job_queue.run_repeating(reminder_job_all_apps, interval=3600, first=10)
-
     app.run_polling()
 
 if __name__=="__main__":
     main()
+
 
 
 
