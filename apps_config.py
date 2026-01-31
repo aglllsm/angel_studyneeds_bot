@@ -8,9 +8,10 @@ APPS = {
     "camscanner": {"title": "CamScanner", "sheet": "camscanner", "icon": "✨"},
 }
 
-# ===== RULES REMINDER =====
-BULANAN_MIN_DAYS = 25
+# durasi “bulanan” dianggap >= ini
+BULANAN_MIN_DAYS = 28
 
+# rule reminder (dipakai di bot)
 REM_DAYS_14 = 14
 REM_DAYS_7  = 7
 REM_DAYS_3  = 3
