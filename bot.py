@@ -460,39 +460,62 @@ async def dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         sh = get_spreadsheet()
         now = datetime.now()
         lines = ["📊 DASHBOARD\n"]
+        errors = []
 
         for _, v in APPS.items():
-            ws = sh.worksheet(v["sheet"])
-            rows = ws.get_all_records()
-            a = e = h3 = h7 = h14 = today = 0
+            try:
+                ws = sh.worksheet(v["sheet"])
+                rows = ws.get_all_records()
 
-            for r in rows:
-                try:
-                    exp = parse_dt(r["expire_datetime"])
-                    secs = (exp - now).total_seconds()
-                    if secs <= 0:
-                        e += 1
-                        continue
-                    a += 1
-                    d = secs / 86400
-                    if d <= 14: h14 += 1
-                    if d <= 7:  h7 += 1
-                    if d <= 3:  h3 += 1
-                    if d <= 0.01: today += 1
-                except:
-                    pass
+                a = e = h3 = h7 = h14 = today = 0
+                for r in rows:
+                    try:
+                        exp = parse_dt(r["expire_datetime"])
+                        secs = (exp - now).total_seconds()
+                        if secs <= 0:
+                            e += 1
+                            continue
+                        a += 1
+                        d = secs / 86400
+                        if d <= 14:
+                            h14 += 1
+                        if d <= 7:
+                            h7 += 1
+                        if d <= 3:
+                            h3 += 1
+                        if d <= 0.01:
+                            today += 1
+                    except Exception:
+                        # skip baris yg format tanggalnya aneh
+                        pass
 
-            lines.append(
-                f"{v.get('icon','✨')} {v['title']}\n"
-                f"Active: {a} | Expired: {e}\n"
-                f"H14: {h14} | H7: {h7} | H3: {h3} | Today: {today}\n"
-            )
+                lines.append(
+                    f"{v.get('icon','✨')} {v['title']}\n"
+                    f"Active: {a} | Expired: {e}\n"
+                    f"H14: {h14} | H7: {h7} | H3: {h3} | Today: {today}\n"
+                )
+
+            except Exception as e:
+                errors.append(f"{v.get('title','?')}: {type(e).__name__}")
+                # tetap lanjut app lain, jangan ngantung
+                continue
+
+        if errors:
+            lines.append("⚠️ Tab error (cek nama tab/akses):")
+            lines.extend([f"- {x}" for x in errors[:10]])
 
         return "\n".join(lines)
 
-    text = await asyncio.to_thread(_work)
-    await update.message.reply_text(text, reply_markup=main_menu_kb())
+    try:
+        text = await asyncio.wait_for(asyncio.to_thread(_work), timeout=60)
+    except asyncio.TimeoutError:
+        await update.message.reply_text(
+            "⏳ Dashboard terlalu lama (timeout).\n"
+            "Biasanya karena sheet besar banget / ada tab yang bermasalah."
+        )
+        return
 
+    await update.message.reply_text(text, reply_markup=main_menu_kb())
 
 # ==========================================================
 # CHECK EMAIL FLOW
@@ -595,10 +618,18 @@ async def delete_duplicates_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 else:
                     seen.add(em)
 
-            for rn in sorted(to_delete_rownums, reverse=True):
-                ws.delete_rows(rn)
-
+            # ✅ batch delete biar cepat
+            to_delete_rownums = sorted(to_delete_rownums)
             if to_delete_rownums:
+                start = prev = to_delete_rownums[0]
+                for rn in to_delete_rownums[1:]:
+                    if rn == prev + 1:
+                        prev = rn
+                    else:
+                        ws.delete_rows(start, prev)
+                        start = prev = rn
+                ws.delete_rows(start, prev)
+
                 per_app.append(f"{v['title']}: {len(to_delete_rownums)}")
                 total_deleted += len(to_delete_rownums)
 
@@ -606,8 +637,14 @@ async def delete_duplicates_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return "✅ Tidak ada email dobel."
         return "🗑 Duplikat dihapus:\n" + "\n".join(per_app) + f"\n\nTotal: {total_deleted}"
 
-    result = await asyncio.to_thread(_work)
+    try:
+        result = await asyncio.wait_for(asyncio.to_thread(_work), timeout=90)
+    except asyncio.TimeoutError:
+        await update.message.reply_text("⏳ Proses hapus dobel terlalu lama (timeout).")
+        return
+
     await update.message.reply_text(result, reply_markup=main_menu_kb())
+
 
 # ==========================================================
 # REMINDER JOB
@@ -738,6 +775,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
