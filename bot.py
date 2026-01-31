@@ -496,7 +496,8 @@ async def dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
 
             except Exception as e:
-                errors.append(f"{v.get('title','?')}: {type(e).__name__}")
+    errors.append(f"{v.get('title','?')}: {type(e).__name__} - {str(e)[:120]}")
+    continue
                 # tetap lanjut app lain, jangan ngantung
                 continue
 
@@ -775,6 +776,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
