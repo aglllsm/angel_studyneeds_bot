@@ -486,28 +486,52 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return CHECK_EMAIL
 
     sh = get_spreadsheet()
-    lines = [f"🔎 HASIL CEK: {email}\n"]
-    found = False
     now = datetime.now()
     email_l = email.lower()
 
+    lines = [f"🔎 HASIL CEK: {email}\n"]
+    found = False
+
     for _, v in APPS.items():
         ws = sh.worksheet(v["sheet"])
-        rows = ws.get_all_records()
-        for r in rows:
-            if str(r.get("email", "")).strip().lower() == email_l:
-                found = True
-                try:
-                    exp = parse_dt(r["expire_datetime"])
-                    sisa = human(exp - now)
-                except Exception:
-                    sisa = "?"
-                lines.append(
-                    f"{v.get('icon','✨')} {v['title']}\n"
-                    f"Expire: {r.get('expire_datetime','-')} ({sisa})\n"
-                    f"Status: {r.get('status','-')}\n"
-                    f"HP: {mask_phone(str(r.get('customer_phone','')))}\n"
-                )
+        values = ws.get_all_values()  # <-- lebih cepat/stabil
+
+        if not values or len(values) < 2:
+            continue
+
+        headers = [h.strip() for h in values[0]]
+        try:
+            idx_email = headers.index("email")
+        except ValueError:
+            continue
+
+        # index optional
+        idx_exp = headers.index("expire_datetime") if "expire_datetime" in headers else None
+        idx_status = headers.index("status") if "status" in headers else None
+        idx_phone = headers.index("customer_phone") if "customer_phone" in headers else None
+
+        for row in values[1:]:
+            row_email = (row[idx_email] if idx_email < len(row) else "").strip().lower()
+            if row_email != email_l:
+                continue
+
+            found = True
+            exp_str = row[idx_exp] if (idx_exp is not None and idx_exp < len(row)) else "-"
+            status = row[idx_status] if (idx_status is not None and idx_status < len(row)) else "-"
+            phone = row[idx_phone] if (idx_phone is not None and idx_phone < len(row)) else ""
+
+            try:
+                exp = parse_dt(exp_str)
+                sisa = human(exp - now)
+            except Exception:
+                sisa = "?"
+
+            lines.append(
+                f"{v.get('icon','✨')} {v['title']}\n"
+                f"Expire: {exp_str} ({sisa})\n"
+                f"Status: {status}\n"
+                f"HP: {mask_phone(phone)}\n"
+            )
 
     if not found:
         await update.message.reply_text("❌ Tidak ketemu di semua app.", reply_markup=main_menu_kb())
@@ -515,7 +539,6 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb())
 
     return ConversationHandler.END
-
 
 # ==========================================================
 # DELETE DUPLICATES
@@ -683,6 +706,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
