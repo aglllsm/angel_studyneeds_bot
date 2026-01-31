@@ -14,14 +14,14 @@ from telegram.ext import (
     filters,
 )
 from datetime import datetime, timedelta
-import os, json, tempfile, re
+import os, json, tempfile
 import gspread
 from google.oauth2.service_account import Credentials
 
-from apps_config import APPS, BULANAN_MIN_DAYS, REM_DAYS_14, REM_DAYS_7, REM_DAYS_3, REM_HOURS_1
+from apps_config import APPS, BULANAN_MIN_DAYS
 
 # ==========================================================
-# CONFIG
+# CONFIG (Railway Variables)
 # ==========================================================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 SHEET_NAME = os.environ.get("SHEET_NAME", "Angel Studyneeds Sales")
@@ -48,17 +48,15 @@ def main_menu_kb():
     )
 
 def apps_inline_kb(prefix: str):
-    """
-    Semua tombol aplikasi ambil dari APPS (termasuk Turnitin).
-    Jadi Turnitin tidak dobel.
-    """
+    # ambil semua dari APPS, jangan hardcode Turnitin lagi
+    items = list(APPS.items())
+
     buttons = []
     row = []
-    for app_key, v in APPS.items():
+    for k, v in items:
         icon = v.get("icon", "✨")
-        row.append(
-            InlineKeyboardButton(f"{icon} {v['title']}", callback_data=f"{prefix}:{app_key}")
-        )
+        title = v.get("title", k)
+        row.append(InlineKeyboardButton(f"{icon} {title}", callback_data=f"{prefix}:{k}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
@@ -183,41 +181,37 @@ async def cancel_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==========================================================
-# MENU HANDLER (HANYA untuk teks tombol menu)
+# ENTRY POINTS (PENTING!)
+# Ini yang bikin gak ke-reset pas user ngetik email/angka
 # ==========================================================
-async def handle_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    text = (update.message.text or "").strip()
+async def entry_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Pilih aplikasi yang mau ditambah:", reply_markup=apps_inline_kb("ADD"))
+    return ADD_PICK_APP
 
-    if text == MENU_ADD:
-        await update.message.reply_text("Pilih aplikasi yang mau ditambah:", reply_markup=apps_inline_kb("ADD"))
-        return ADD_PICK_APP
+async def entry_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Ketik email yang mau dicek (contoh: user@gmail.com)\n/cancel untuk batal")
+    return CHECK_EMAIL
+
+# ==========================================================
+# MENU NON-CONV (tombol lain)
+# ==========================================================
+async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    text = (update.message.text or "").strip()
 
     if text == MENU_LIST:
         await dashboard(update, ctx)
-        return ConversationHandler.END
-
-    if text == MENU_CHECK:
-        await update.message.reply_text("Ketik email yang mau dicek (contoh: user@gmail.com)\n/cancel untuk batal")
-        return CHECK_EMAIL
-
+        return
     if text == MENU_DELETE:
         await delete_duplicates_all(update, ctx)
-        return ConversationHandler.END
-
+        return
     if text == MENU_OWNER:
         await set_owner(update, ctx)
-        return ConversationHandler.END
-
+        return
     if text == MENU_HELP:
         await help_cmd(update, ctx)
-        return ConversationHandler.END
+        return
 
-    return ConversationHandler.END
-
-# ==========================================================
-# FALLBACK TEXT (buat chat random)
-# ==========================================================
-async def unknown_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # kalau ngetik random saat tidak ada proses conv
     await update.message.reply_text("Pilih menu ya 🙂", reply_markup=main_menu_kb())
 
 # ==========================================================
@@ -419,13 +413,13 @@ async def delete_duplicates_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         to_delete_rownums = []
 
         for idx, r in enumerate(rows, start=2):
-            email = str(r.get("email", "")).strip().lower()
-            if not email:
+            em = str(r.get("email", "")).strip().lower()
+            if not em:
                 continue
-            if email in seen:
+            if em in seen:
                 to_delete_rownums.append(idx)
             else:
-                seen.add(email)
+                seen.add(em)
 
         for rn in sorted(to_delete_rownums, reverse=True):
             ws.delete_rows(rn)
@@ -463,41 +457,44 @@ async def reminder_job_all_apps(ctx: ContextTypes.DEFAULT_TYPE):
             if colname in headers:
                 ws.update_cell(i_row, headers.index(colname) + 1, "TRUE")
 
+        def set_status_expired(i_row: int):
+            if "status" in headers:
+                ws.update_cell(i_row, headers.index("status") + 1, "EXPIRED")
+
         for i, r in enumerate(rows, start=2):
             try:
                 exp = parse_dt(r["expire_datetime"])
                 secs = (exp - now).total_seconds()
 
                 if secs <= 0:
-                    if "status" in headers:
-                        ws.update_cell(i, headers.index("status") + 1, "EXPIRED")
+                    set_status_expired(i)
                     continue
 
                 days_left = secs / 86400
                 dur = int(r.get("duration_days", 0) or 0)
 
                 if dur >= BULANAN_MIN_DAYS:
-                    if days_left <= REM_DAYS_14 and not _flag(r.get("rem14_sent")):
-                        msgs.append(f"{r.get('email','')} | H-14 | {mask_phone(str(r.get('customer_phone','')))}")
+                    if days_left <= 14 and not _flag(r.get("rem14_sent")):
+                        msgs.append(f"{r.get('email','')} | H-14 | {mask_phone(r.get('customer_phone',''))}")
                         set_flag(i, "rem14_sent")
-                    if days_left <= REM_DAYS_7 and not _flag(r.get("rem7_sent")):
-                        msgs.append(f"{r.get('email','')} | H-7 | {mask_phone(str(r.get('customer_phone','')))}")
+                    if days_left <= 7 and not _flag(r.get("rem7_sent")):
+                        msgs.append(f"{r.get('email','')} | H-7 | {mask_phone(r.get('customer_phone',''))}")
                         set_flag(i, "rem7_sent")
-                    if days_left <= REM_DAYS_3 and not _flag(r.get("rem3_sent")):
-                        msgs.append(f"{r.get('email','')} | H-3 | {mask_phone(str(r.get('customer_phone','')))}")
+                    if days_left <= 3 and not _flag(r.get("rem3_sent")):
+                        msgs.append(f"{r.get('email','')} | H-3 | {mask_phone(r.get('customer_phone',''))}")
                         set_flag(i, "rem3_sent")
                     if days_left <= 1 and not _flag(r.get("rem1d_sent")):
-                        msgs.append(f"{r.get('email','')} | H-1 | {mask_phone(str(r.get('customer_phone','')))}")
+                        msgs.append(f"{r.get('email','')} | H-1 | {mask_phone(r.get('customer_phone',''))}")
                         set_flag(i, "rem1d_sent")
                 else:
-                    if secs / 3600 <= REM_HOURS_1 and not _flag(r.get("rem1h_sent")):
-                        msgs.append(f"{r.get('email','')} | H-1 JAM | {mask_phone(str(r.get('customer_phone','')))}")
+                    if secs / 3600 <= 1 and not _flag(r.get("rem1h_sent")):
+                        msgs.append(f"{r.get('email','')} | H-1 JAM | {mask_phone(r.get('customer_phone',''))}")
                         set_flag(i, "rem1h_sent")
             except:
                 pass
 
         if msgs:
-            await ctx.bot.send_message(owner, f"🔔 {v['title']}\n" + "\n".join(msgs))
+            await ctx.bot.send_message(owner, f"🔔 {v.get('icon','✨')} {v['title']}\n" + "\n".join(msgs))
 
 # ==========================================================
 # MAIN
@@ -505,52 +502,39 @@ async def reminder_job_all_apps(ctx: ContextTypes.DEFAULT_TYPE):
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN kosong. Set di Railway Variables.")
-
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Commands
+    # commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("set_owner", set_owner))
-    app.add_handler(CommandHandler("dashboard", dashboard))
     app.add_handler(CommandHandler("cancel", cancel))
 
-    # ✅ Entry point cuma tombol menu (bukan semua teks)
-    menu_pattern = f"^({re.escape(MENU_ADD)}|{re.escape(MENU_LIST)}|{re.escape(MENU_CHECK)}|{re.escape(MENU_DELETE)}|{re.escape(MENU_OWNER)}|{re.escape(MENU_HELP)})$"
-
+    # conversation handler (CUMA untuk Tambah Akun & Cek Email)
     conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex(menu_pattern), handle_menu)
+            MessageHandler(filters.Regex(f"^{MENU_ADD}$"), entry_add),
+            MessageHandler(filters.Regex(f"^{MENU_CHECK}$"), entry_check),
         ],
         states={
-            ADD_PICK_APP: [
-                CallbackQueryHandler(add_pick_app_cb),
-            ],
-            ADD_EMAIL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_email),
-            ],
-            ADD_DAYS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_days),
-            ],
-            ADD_PHONE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_phone),
-            ],
-            CHECK_EMAIL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, check_email_step),
-            ],
+            ADD_PICK_APP: [CallbackQueryHandler(add_pick_app_cb)],
+            ADD_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_email)],
+            ADD_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_days)],
+            ADD_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_phone)],
+            CHECK_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, check_email_step)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
             CallbackQueryHandler(cancel_cb, pattern="^CANCEL$"),
         ],
-        allow_reentry=True,
+        allow_reentry=False,  # 🔥 ini kunci biar gak nembak ulang
     )
     app.add_handler(conv)
 
-    # ✅ kalau user ngetik random di luar flow
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_text))
+    # handler untuk tombol lain (list/delete/owner/help)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_other))
 
-    # Reminder job
+    # reminder
     app.job_queue.run_repeating(reminder_job_all_apps, interval=3600, first=10)
 
     app.run_polling()
