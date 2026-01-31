@@ -1,4 +1,9 @@
-BULANAN_MIN_DAYS = 28
+# apps_config.py
+
+# Durasi dianggap "bulanan" kalau >= ini (hari)
+BULANAN_MIN_DAYS = 25
+
+# Threshold reminder (hari/jam)
 REM_DAYS_14 = 14
 REM_DAYS_7 = 7
 REM_DAYS_3 = 3
