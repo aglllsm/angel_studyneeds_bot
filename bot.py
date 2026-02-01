@@ -312,8 +312,8 @@ async def entry_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # MENU NON-CONV (tombol lain)
 # ==========================================================
 async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    # kalau lagi conversation, jangan ganggu
-    if ctx.user_data.get("__in_conv__"):
+    # kalau lagi conversation add/check, jangan ganggu
+    if any(k in ctx.user_data for k in ("add_app", "add_email", "add_days")):
         return
 
     text = norm_text(update.message.text)
@@ -333,7 +333,6 @@ async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if is_menu_help(text):
         await help_cmd(update, ctx)
         return
-
 
 # ==========================================================
 # ADD FLOW
@@ -771,8 +770,8 @@ def main():
     # Conversation handler
     conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex(r".*Tambah Akun$"), entry_add),
-            MessageHandler(filters.Regex(r".*Cek Email$"), entry_check),
+            MessageHandler(filters.Regex(r".*(Tambah Akun)$"), entry_add),
+            MessageHandler(filters.Regex(r".*(Cek Email)$"), entry_check),
             CommandHandler("add", entry_add),
             CommandHandler("cek", entry_check),
         ],
@@ -795,12 +794,6 @@ def main():
         conversation_timeout=300,
     )
 
-    # Tandai sedang conversation supaya handle_menu_other gak ganggu
-    async def _mark_in_conv(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        ctx.user_data["__in_conv__"] = True
-
-    # Hook sederhana: setiap message masuk conv akan dianggap in_conv
-    conv._entry_points.insert(0, MessageHandler(filters.ALL, _mark_in_conv))
 
     # group 0: conversation prioritas
     app.add_handler(conv, group=0)
@@ -816,3 +809,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
