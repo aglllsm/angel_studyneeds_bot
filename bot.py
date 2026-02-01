@@ -352,22 +352,19 @@ async def add_pick_app_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    email = (update.message.text or "").strip()
-
-    # anti kirim dobel
-    if ctx.user_data.get("add_email") == email:
-        return ADD_EMAIL
+    email = (update.message.text or "").strip().lower()
 
     if not is_valid_email(email):
-        await update.message.reply_text(
-            "❌ Email tidak valid. Coba lagi:\n/cancel untuk batal"
-        )
+        await update.message.reply_text("❌ Email tidak valid. Coba lagi:\n/cancel untuk batal")
         return ADD_EMAIL
 
+    # Kalau user kirim email yang sama lagi, tetap lanjut (jangan silent)
+    if ctx.user_data.get("add_email") == email:
+        await update.message.reply_text("Masukkan durasi dalam HARI (contoh 30):\n/cancel untuk batal")
+        return ADD_DAYS
+
     ctx.user_data["add_email"] = email
-    await update.message.reply_text(
-        "Masukkan durasi dalam HARI (contoh 30):\n/cancel untuk batal"
-    )
+    await update.message.reply_text("Masukkan durasi dalam HARI (contoh 30):\n/cancel untuk batal")
     return ADD_DAYS
 
 
@@ -788,6 +785,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
