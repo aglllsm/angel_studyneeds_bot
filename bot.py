@@ -59,9 +59,7 @@ def apps_inline_kb(prefix: str):
     for k, v in items:
         icon = v.get("icon", "✨")
         title = v.get("title", k)
-        row.append(
-            InlineKeyboardButton(f"{icon} {title}", callback_data=f"{prefix}:{k}")
-        )
+        row.append(InlineKeyboardButton(f"{icon} {title}", callback_data=f"{prefix}:{k}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
@@ -75,22 +73,44 @@ def apps_inline_kb(prefix: str):
 # ==========================================================
 # HELPERS
 # ==========================================================
+def norm_text(t: str) -> str:
+    t = (t or "").strip()
+    t = " ".join(t.split())
+    return t
+
+
 def is_valid_email(e: str) -> bool:
     e = (e or "").strip()
     return ("@" in e) and ("." in e) and (len(e) >= 6)
 
 
-def clean_phone(p):
-    return "".join(c for c in str(p) if c.isdigit())
+def clean_digits(s: str) -> str:
+    return "".join(c for c in str(s or "") if c.isdigit())
 
 
-def is_valid_phone(p) -> bool:
-    return len(clean_phone(p)) >= 8
+def normalize_wa(p: str) -> str:
+    """
+    Terima: 08xxxx, 62xxxx, +62xxxx, ada spasi/dash.
+    Output: 08xxxx (format lokal Indonesia).
+    """
+    d = clean_digits(p)
+    if d.startswith("62"):
+        d = "0" + d[2:]
+    # kalau user pakai +62, clean_digits sudah buang '+', tetap masuk case di atas
+    return d
+
+
+def is_valid_phone(p: str) -> bool:
+    d = normalize_wa(p)
+    # Minimal 9 digit, maksimal 14 digit, dan harus mulai 08
+    return d.startswith("08") and d.isdigit() and (9 <= len(d) <= 14)
 
 
 def mask_phone(p: str) -> str:
-    p = str(p or "")
-    return p[:4] + "****" + p[-4:] if len(p) >= 8 else p
+    d = normalize_wa(p)
+    if len(d) >= 8:
+        return d[:4] + "****" + d[-4:]
+    return d
 
 
 def fmt_dt(dt: datetime) -> str:
@@ -119,20 +139,14 @@ def _flag(v):
     return str(v).strip().lower() in ("1", "true", "yes", "sent", "done")
 
 
-def norm_text(t: str) -> str:
-    t = (t or "").strip()
-    t = " ".join(t.split())
-    return t
+def is_menu_add(t: str) -> bool:
+    t = norm_text(t)
+    return t.endswith("Tambah Akun") or t == "Tambah Akun"
 
 
 def is_menu_check(t: str) -> bool:
     t = norm_text(t)
     return t.endswith("Cek Email") or t == "Cek Email"
-
-
-def is_menu_add(t: str) -> bool:
-    t = norm_text(t)
-    return t.endswith("Tambah Akun") or t == "Tambah Akun"
 
 
 def is_menu_list(t: str) -> bool:
@@ -223,9 +237,8 @@ CHECK_EMAIL = 10
 # COMMANDS
 # ==========================================================
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤍 Angel Studyneeds Bot", reply_markup=main_menu_kb()
-    )
+    ctx.user_data.clear()
+    await update.message.reply_text("🤍 Angel Studyneeds Bot", reply_markup=main_menu_kb())
 
 
 async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -268,6 +281,7 @@ async def cancel_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
     return ConversationHandler.END
 
+
 async def conv_timeout(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
     if update.message:
@@ -279,26 +293,27 @@ async def conv_timeout(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ENTRY POINTS
 # ==========================================================
 async def entry_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Pilih aplikasi yang mau ditambah:", reply_markup=apps_inline_kb("ADD")
-    )
+    # reset biar gak nyangkut state lama
+    ctx.user_data.clear()
+    await update.message.reply_text("Pilih aplikasi yang mau ditambah:", reply_markup=apps_inline_kb("ADD"))
     return ADD_PICK_APP
 
-async def entry_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    ctx.user_data.clear()                 # bersihin state lama
-    ctx.user_data["check_mode"] = True    # 🔥 INI DIA TEMPATNYA
 
+async def entry_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # reset biar gak nyangkut state lama
+    ctx.user_data.clear()
     await update.message.reply_text(
         "Ketik email yang mau dicek (contoh: user@gmail.com)\n/cancel untuk batal"
     )
     return CHECK_EMAIL
 
+
 # ==========================================================
 # MENU NON-CONV (tombol lain)
 # ==========================================================
 async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    # block menu HANYA kalau lagi proses add/check (bukan sekadar user_data ada isi)
-    if any(k in ctx.user_data for k in ("add_app", "add_email", "add_days", "check_mode")):
+    # kalau lagi conversation, jangan ganggu
+    if ctx.user_data.get("__in_conv__"):
         return
 
     text = norm_text(update.message.text)
@@ -319,7 +334,6 @@ async def handle_menu_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await help_cmd(update, ctx)
         return
 
-    return
 
 # ==========================================================
 # ADD FLOW
@@ -333,14 +347,17 @@ async def add_pick_app_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if ":" not in q.data:
         await q.edit_message_text("❌ Callback tidak valid.")
+        ctx.user_data.clear()
         return ConversationHandler.END
 
     prefix, app_key = q.data.split(":", 1)
     if prefix != "ADD":
+        ctx.user_data.clear()
         return ConversationHandler.END
 
     if app_key not in APPS:
         await q.edit_message_text("❌ App tidak dikenali.")
+        ctx.user_data.clear()
         return ConversationHandler.END
 
     ctx.user_data["add_app"] = app_key
@@ -358,11 +375,6 @@ async def add_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Email tidak valid. Coba lagi:\n/cancel untuk batal")
         return ADD_EMAIL
 
-    # Kalau user kirim email yang sama lagi, tetap lanjut (jangan silent)
-    if ctx.user_data.get("add_email") == email:
-        await update.message.reply_text("Masukkan durasi dalam HARI (contoh 30):\n/cancel untuk batal")
-        return ADD_DAYS
-
     ctx.user_data["add_email"] = email
     await update.message.reply_text("Masukkan durasi dalam HARI (contoh 30):\n/cancel untuk batal")
     return ADD_DAYS
@@ -370,6 +382,16 @@ async def add_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def add_days(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     t = (update.message.text or "").strip()
+
+    # Kalau user salah masukin WA di step durasi, kasih hint yang bener
+    if is_valid_phone(t):
+        await update.message.reply_text(
+            "⚠️ Itu kelihatannya nomor WA.\n"
+            "Di langkah ini kamu harus isi DURASI dulu (contoh: 30).\n"
+            "Ketik durasi hari ya:\n/cancel untuk batal"
+        )
+        return ADD_DAYS
+
     if not t.isdigit():
         await update.message.reply_text("❌ Durasi harus angka. Contoh: 30\n/cancel untuk batal")
         return ADD_DAYS
@@ -380,17 +402,23 @@ async def add_days(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return ADD_DAYS
 
     ctx.user_data["add_days"] = days
-    await update.message.reply_text("Masukkan nomor WA customer (contoh: 08xxxx):\n/cancel untuk batal")
+    await update.message.reply_text("Masukkan nomor WA customer (contoh: 08xxxx atau +62xxxx):\n/cancel untuk batal")
     return ADD_PHONE
 
 
 async def add_phone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # Guard: pastikan state lengkap
+    if not all(k in ctx.user_data for k in ("add_app", "add_email", "add_days")):
+        ctx.user_data.clear()
+        await update.message.reply_text("⚠️ State tidak lengkap. Ulangi dari ➕ Tambah Akun ya.", reply_markup=main_menu_kb())
+        return ConversationHandler.END
+
     phone_raw = (update.message.text or "").strip()
     if not is_valid_phone(phone_raw):
-        await update.message.reply_text("❌ Nomor tidak valid. Coba lagi.\n/cancel untuk batal")
+        await update.message.reply_text("❌ Nomor tidak valid. Contoh: 08123456789 / +628123456789\n/cancel untuk batal")
         return ADD_PHONE
 
-    phone = clean_phone(phone_raw)
+    phone = normalize_wa(phone_raw)
     app_key = ctx.user_data["add_app"]
     email = ctx.user_data["add_email"]
     days = ctx.user_data["add_days"]
@@ -501,9 +529,7 @@ async def dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
 
             except Exception as e:
-                errors.append(
-                    f"{v.get('title','?')}: {type(e).__name__} - {str(e)[:120]}"
-                )
+                errors.append(f"{v.get('title','?')}: {type(e).__name__} - {str(e)[:120]}")
                 continue
 
         if errors:
@@ -522,6 +548,7 @@ async def dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, reply_markup=main_menu_kb())
 
+
 # ==========================================================
 # CHECK EMAIL FLOW
 # ==========================================================
@@ -531,10 +558,7 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Email tidak valid. Coba lagi:\n/cancel untuk batal")
         return CHECK_EMAIL
 
-    await update.message.reply_text("🔎 Mengecek email di semua app...")  # biar user tau bot lagi kerja
-
-    # DEBUG (hapus nanti kalau sudah beres)
-    await update.message.reply_text("DEBUG: masuk check_email_step")
+    await update.message.reply_text("🔎 Mengecek email di semua app...")
 
     sh = get_spreadsheet()
     now = datetime.now()
@@ -544,66 +568,63 @@ async def check_email_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     found = False
     errors = []
 
-    try:
-        for app_key, v in APPS.items():
-            try:
-                ws = sh.worksheet(v["sheet"])      # bisa error kalau nama tab beda
-                values = ws.get_all_values()       # lebih cepat dari get_all_records
-                if not values or len(values) < 2:
-                    continue
-
-                headers = [h.strip() for h in values[0]]
-                if "email" not in headers:
-                    continue
-
-                idx_email = headers.index("email")
-                idx_exp = headers.index("expire_datetime") if "expire_datetime" in headers else None
-                idx_status = headers.index("status") if "status" in headers else None
-                idx_phone = headers.index("customer_phone") if "customer_phone" in headers else None
-
-                for row in values[1:]:
-                    row_email = (row[idx_email] if idx_email < len(row) else "").strip().lower()
-                    if row_email != email_l:
-                        continue
-
-                    found = True
-                    exp_str = row[idx_exp] if (idx_exp is not None and idx_exp < len(row)) else "-"
-                    status = row[idx_status] if (idx_status is not None and idx_status < len(row)) else "-"
-                    phone = row[idx_phone] if (idx_phone is not None and idx_phone < len(row)) else ""
-
-                    try:
-                        exp = parse_dt(exp_str)
-                        sisa = human(exp - now)
-                    except Exception:
-                        sisa = "?"
-
-                    lines.append(
-                        f"{v.get('icon','✨')} {v['title']}\n"
-                        f"Expire: {exp_str} ({sisa})\n"
-                        f"Status: {status}\n"
-                        f"HP: {mask_phone(phone)}\n"
-                    )
-
-            except Exception as e:
-                errors.append(f"{v.get('title', app_key)}: {type(e).__name__} - {str(e)[:120]}")
+    for app_key, v in APPS.items():
+        try:
+            ws = sh.worksheet(v["sheet"])
+            values = ws.get_all_values()
+            if not values or len(values) < 2:
                 continue
 
-        if not found:
-            lines.append("❌ Tidak ketemu di semua app.")
+            headers = [h.strip() for h in values[0]]
+            if "email" not in headers:
+                continue
 
-        if errors:
-            lines.append("\n⚠️ Ada tab yang error (cek nama tab di Google Sheet):")
-            lines.extend([f"- {x}" for x in errors[:10]])
+            idx_email = headers.index("email")
+            idx_exp = headers.index("expire_datetime") if "expire_datetime" in headers else None
+            idx_status = headers.index("status") if "status" in headers else None
+            idx_phone = headers.index("customer_phone") if "customer_phone" in headers else None
 
-        await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb())
-        return ConversationHandler.END
+            for row in values[1:]:
+                row_email = (row[idx_email] if idx_email < len(row) else "").strip().lower()
+                if row_email != email_l:
+                    continue
 
-    except asyncio.TimeoutError:
-        await update.message.reply_text("⏳ Timeout. Ulangi dari menu ya.")
-        return ConversationHandler.END
+                found = True
+                exp_str = row[idx_exp] if (idx_exp is not None and idx_exp < len(row)) else "-"
+                status = row[idx_status] if (idx_status is not None and idx_status < len(row)) else "-"
+                phone = row[idx_phone] if (idx_phone is not None and idx_phone < len(row)) else ""
+
+                try:
+                    exp = parse_dt(exp_str)
+                    sisa = human(exp - now)
+                except Exception:
+                    sisa = "?"
+
+                lines.append(
+                    f"{v.get('icon','✨')} {v['title']}\n"
+                    f"Expire: {exp_str} ({sisa})\n"
+                    f"Status: {status}\n"
+                    f"HP: {mask_phone(phone)}\n"
+                )
+
+        except Exception as e:
+            errors.append(f"{v.get('title', app_key)}: {type(e).__name__} - {str(e)[:120]}")
+            continue
+
+    if not found:
+        lines.append("❌ Tidak ketemu di semua app.")
+
+    if errors:
+        lines.append("\n⚠️ Ada tab yang error (cek nama tab di Google Sheet):")
+        lines.extend([f"- {x}" for x in errors[:10]])
+
+    await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb())
+    ctx.user_data.clear()
+    return ConversationHandler.END
+
 
 # ==========================================================
-# DELETE DUPLICATES
+# DELETE DUPLICATES (FIX: delete dari bawah biar row gak geser)
 # ==========================================================
 async def delete_duplicates_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🧹 Lagi hapus email dobel...")
@@ -617,38 +638,31 @@ async def delete_duplicates_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             ws = sh.worksheet(v["sheet"])
             rows = ws.get_all_records()
             seen = set()
-            to_delete_rownums = []
+            to_delete = []
 
-            for idx, r in enumerate(rows, start=2):
+            for idx, r in enumerate(rows, start=2):  # start=2 karena row 1 header
                 em = str(r.get("email", "")).strip().lower()
                 if not em:
                     continue
                 if em in seen:
-                    to_delete_rownums.append(idx)
+                    to_delete.append(idx)
                 else:
                     seen.add(em)
 
-            # ✅ batch delete biar cepat
-            to_delete_rownums = sorted(to_delete_rownums)
-            if to_delete_rownums:
-                start = prev = to_delete_rownums[0]
-                for rn in to_delete_rownums[1:]:
-                    if rn == prev + 1:
-                        prev = rn
-                    else:
-                        ws.delete_rows(start, prev)
-                        start = prev = rn
-                ws.delete_rows(start, prev)
+            if to_delete:
+                # hapus dari bawah biar indeks aman
+                for rn in sorted(to_delete, reverse=True):
+                    ws.delete_rows(rn)
 
-                per_app.append(f"{v['title']}: {len(to_delete_rownums)}")
-                total_deleted += len(to_delete_rownums)
+                per_app.append(f"{v['title']}: {len(to_delete)}")
+                total_deleted += len(to_delete)
 
         if total_deleted == 0:
             return "✅ Tidak ada email dobel."
         return "🗑 Duplikat dihapus:\n" + "\n".join(per_app) + f"\n\nTotal: {total_deleted}"
 
     try:
-        result = await asyncio.wait_for(asyncio.to_thread(_work), timeout=90)
+        result = await asyncio.wait_for(asyncio.to_thread(_work), timeout=120)
     except asyncio.TimeoutError:
         await update.message.reply_text("⏳ Proses hapus dobel terlalu lama (timeout).")
         return
@@ -668,18 +682,28 @@ async def reminder_job_all_apps(ctx: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
 
     for _, v in APPS.items():
-        ws = sh.worksheet(v["sheet"])
-        rows = ws.get_all_records()
+        try:
+            ws = sh.worksheet(v["sheet"])
+            rows = ws.get_all_records()
+            headers = ws.row_values(1)
+        except Exception:
+            continue
+
         msgs = []
-        headers = ws.row_values(1)
 
         def set_flag(i_row: int, colname: str):
-            if colname in headers:
-                ws.update_cell(i_row, headers.index(colname) + 1, "TRUE")
+            try:
+                if colname in headers:
+                    ws.update_cell(i_row, headers.index(colname) + 1, "TRUE")
+            except Exception:
+                pass
 
         def set_status_expired(i_row: int):
-            if "status" in headers:
-                ws.update_cell(i_row, headers.index("status") + 1, "EXPIRED")
+            try:
+                if "status" in headers:
+                    ws.update_cell(i_row, headers.index("status") + 1, "EXPIRED")
+            except Exception:
+                pass
 
         for i, r in enumerate(rows, start=2):
             try:
@@ -714,9 +738,12 @@ async def reminder_job_all_apps(ctx: ContextTypes.DEFAULT_TYPE):
                 pass
 
         if msgs:
-            await ctx.bot.send_message(
-                owner, f"🔔 {v.get('icon','✨')} {v['title']}\n" + "\n".join(msgs)
-            )
+            try:
+                await ctx.bot.send_message(
+                    owner, f"🔔 {v.get('icon','✨')} {v['title']}\n" + "\n".join(msgs)
+                )
+            except Exception:
+                pass
 
 
 # ==========================================================
@@ -735,47 +762,51 @@ def main():
     app.add_handler(CommandHandler("owner", set_owner))
     app.add_handler(CommandHandler("cancel", cancel))
 
-    # Command cepat (opsional)
+    # Command cepat
     app.add_handler(CommandHandler("add", entry_add))
     app.add_handler(CommandHandler("cek", entry_check))
     app.add_handler(CommandHandler("list", dashboard))
     app.add_handler(CommandHandler("dupes", delete_duplicates_all))
 
-    # Conversation handler (Tambah Akun & Cek Email)
+    # Conversation handler
     conv = ConversationHandler(
-    entry_points=[
-        MessageHandler(filters.Regex(r".*Tambah Akun$"), entry_add),
-        MessageHandler(filters.Regex(r".*Cek Email$"), entry_check),
-        CommandHandler("add", entry_add),
-        CommandHandler("cek", entry_check),
-    ],
-    states={
-        ADD_PICK_APP: [CallbackQueryHandler(add_pick_app_cb)],
-        ADD_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_email)],
-        ADD_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_days)],
-        ADD_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_phone)],
-        CHECK_EMAIL: [MessageHandler(filters.ALL & ~filters.COMMAND, check_email_step)],
-        ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, conv_timeout)],
-    },
-    fallbacks=[
-        CommandHandler("cancel", cancel),
-        CallbackQueryHandler(cancel_cb, pattern="^CANCEL$"),
-    ],
-    allow_reentry=True,
-    per_chat=True,
-    per_user=True,
-    per_message=False,
-    conversation_timeout=300,
-)
+        entry_points=[
+            MessageHandler(filters.Regex(r".*Tambah Akun$"), entry_add),
+            MessageHandler(filters.Regex(r".*Cek Email$"), entry_check),
+            CommandHandler("add", entry_add),
+            CommandHandler("cek", entry_check),
+        ],
+        states={
+            ADD_PICK_APP: [CallbackQueryHandler(add_pick_app_cb)],
+            ADD_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_email)],
+            ADD_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_days)],
+            ADD_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_phone)],
+            CHECK_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, check_email_step)],
+            ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, conv_timeout)],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CallbackQueryHandler(cancel_cb, pattern="^CANCEL$"),
+        ],
+        allow_reentry=True,
+        per_chat=True,
+        per_user=True,
+        per_message=False,
+        conversation_timeout=300,
+    )
 
-    # group 0: conversation harus paling prioritas
+    # Tandai sedang conversation supaya handle_menu_other gak ganggu
+    async def _mark_in_conv(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        ctx.user_data["__in_conv__"] = True
+
+    # Hook sederhana: setiap message masuk conv akan dianggap in_conv
+    conv._entry_points.insert(0, MessageHandler(filters.ALL, _mark_in_conv))
+
+    # group 0: conversation prioritas
     app.add_handler(conv, group=0)
 
-    # group 1: menu umum (jalan hanya untuk tombol menu, dan gak ganggu conversation)
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_other),
-        group=1
-    )
+    # group 1: menu umum
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_other), group=1)
 
     # reminder
     app.job_queue.run_repeating(reminder_job_all_apps, interval=3600, first=10)
@@ -785,18 +816,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
